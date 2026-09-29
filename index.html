@@ -89,7 +89,29 @@
   }
   .round-progress{ width:90px; height:5px; border-radius:999px; background:var(--line); overflow:hidden; }
   .round-progress > div{ height:100%; width:0; background:var(--text-dim); }
-  @media (prefers-reduced-motion: reduce){ .tile.acted{ animation:none; } }
+  /* units that took damage shake red, healed units glow green */
+  .tile.healed{ animation:healed .6s ease-out; }
+  @keyframes healed{ 0%,100%{ box-shadow:0 0 0 0 transparent; } 40%{ box-shadow:0 0 0 5px var(--heal); } }
+  .tile.hit{ animation:hit .45s ease-out; }
+  @keyframes hit{
+    0%,100%{ transform:translateX(0); box-shadow:0 0 0 0 transparent; }
+    20%{ transform:translateX(-4px); box-shadow:0 0 0 4px var(--danger); }
+    45%{ transform:translateX(4px); } 70%{ transform:translateX(-2px); }
+  }
+  @media (prefers-reduced-motion: reduce){ .tile.acted, .tile.hit, .tile.healed{ animation:none; } }
+
+  /* the action spotlight: what the last pause is showing */
+  .action-panel{
+    flex:0 0 auto; background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--side, var(--line));
+    border-radius:12px; padding:8px 10px; display:flex; flex-direction:column; gap:4px; min-height:78px;
+  }
+  .action-panel.p1{ --side:var(--p1); } .action-panel.p2{ --side:var(--p2); }
+  .action-title{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.9rem; color:var(--side, var(--text)); }
+  .action-line{ font-size:.74rem; line-height:1.35; }
+  .action-line.attack{ color:var(--danger); } .action-line.heal{ color:var(--heal); }
+  .action-line.destroy, .action-line.win{ font-weight:700; }
+  .action-line.meta, .action-line.idle{ color:var(--text-dim); }
+  .action-wait{ font-size:.74rem; color:var(--text-dim); font-style:italic; }
   .slot-empty{
     position:relative; width:92px; min-height:118px; border-radius:10px; border:1px dashed var(--line); color:var(--text-dim);
     display:flex; align-items:center; justify-content:center; font-size:1.3rem;
@@ -130,8 +152,6 @@
     <span class="pill" id="nextPill" hidden>Next: <b id="nextLabel"></b></span>
     <span class="spacer"></span>
     <button class="btn primary" id="mainBtn">Start battle</button>
-    <button class="btn small" id="playBtn" hidden title="Let the clock run, resolving actions as they come">Play ▶▶</button>
-    <button class="btn small ghost" id="finishBtn" hidden title="Resolve the rest of this round at once, without animation">Skip to end</button>
     <a class="btn ghost small" href="decks.html">Decks</a>
     <button class="btn ghost small" id="resetBtn">New game</button>
   </div>
@@ -140,6 +160,10 @@
 <main class="battlefield">
   <section class="panel p1" id="panel-0"></section>
   <div class="center-col">
+    <div class="action-panel" id="actionPanel" aria-live="polite">
+      <div class="inspector-head">Action</div>
+      <div id="actionBody"></div>
+    </div>
     <div class="inspector" id="inspector">
       <div class="inspector-head">Card Info</div>
       <div id="inspectorBody"></div>
@@ -187,7 +211,9 @@
     stopClock();
     var recipes = loadDeckRecipes();
     state = {
-      round: 1, phase: 'setup', tick: 0, roundWins: [0, 0], log: [], queue: [], flash: [],
+      round: 1, phase: 'setup', tick: 0, roundWins: [0, 0], log: [], logSeq: 0, queue: [],
+      fx: { acted: [], hit: [], healed: [] },   // units to animate on the next render
+      spotlight: null,  // { title, side, fromSeq } — the action panel shows log lines from fromSeq on
       selected: null,   // { side, pos } of the pick (a top-of-deck card) being placed
       inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
       players: [newPlayer('Player 1', recipes[0]), newPlayer('Player 2', recipes[1])]
@@ -198,7 +224,7 @@
   }
 
   function addLog(text, type){
-    state.log.push({ text: text, type: type || 'meta' });
+    state.log.push({ text: text, type: type || 'meta', seq: state.logSeq++ });
     if (state.log.length > 300) state.log.shift();
   }
 
@@ -250,6 +276,7 @@
     state.tick = 0;
     state.queue = [];
     state.selected = null;
+    state.spotlight = { title: 'Battle begins', fromSeq: state.logSeq };
     addLog('Round ' + state.round + ': battle begins.', 'meta');
     state.players.forEach(function(p){
       var alive = p.units.filter(Boolean);
@@ -259,7 +286,7 @@
         addLog(p.name + "'s Bulwark stands alone — it doubles its HP to " + b.hp + ' and taunts.', 'meta');
       }
     });
-    if (!checkForWipe()) render();   // a side that fielded no units loses on the spot
+    if (!checkForWipe()) startClock();   // a side that fielded no units loses on the spot
   }
 
   // Turn order: the six board slots are numbered 1–6 and lower numbers act first when units act on the same
@@ -314,61 +341,42 @@
     return null;
   }
 
-  // Resolves the next queued action on the current tick. Queued units killed earlier this tick have left
-  // their slot empty and are skipped. Returns false if nothing was left to resolve on this tick.
+  // Resolves the next queued action on the current tick and spotlights it. Queued units killed earlier this
+  // tick have left their slot empty and are skipped. Returns false if nothing was left on this tick.
   function resolveNext(){
     while (state.queue.length){
       var a = state.queue.shift();
       var u = state.players[a.side].units[a.slot];
       if (!u) continue;
+      clearFx();
+      state.spotlight = { title: 't' + state.tick + ' · ' + state.players[a.side].name + "'s " + u.card.name, side: a.side, fromSeq: state.logSeq };
+      state.fx.acted.push(u);
       act(a.side, a.slot, u);
-      state.flash.push(u);
       if (!checkForWipe()) render();
       return true;
     }
     return false;
   }
-  function timeUp(){ endRound(null, 'time ran out with units standing on both sides'); }
-
-  // Instant version: resolves exactly one action, jumping over ticks where nobody acts. Used by Skip to end.
-  function stepInstant(){
-    if (state.phase !== 'battle') return;
-    while (!state.queue.length){
-      if (state.tick >= SIM_TICKS){ timeUp(); return; }
-      state.tick++;
-      state.queue = actorsAt(state.tick);
-    }
-    resolveNext();
-  }
-  function finishRound(){
-    stopClock();
-    for (var guard = 0; state.phase === 'battle' && guard < 1000; guard++) stepInstant();
+  function clearFx(){ state.fx = { acted: [], hit: [], healed: [] }; }
+  function timeUp(){
+    state.spotlight = { title: 'Time is up', fromSeq: state.logSeq };
+    endRound(null, 'time ran out with units standing on both sides');
   }
 
-  // ---------- The animated clock ----------
-  // Time really flows: the clock advances TICK_MS per tick and every charge bar fills smoothly between
-  // renders. Step runs the clock to the next action and resolves it; Play keeps it running, pausing briefly
-  // after each tick with actions so the hits can be read.
-  var TICK_MS = 60, ACTION_PAUSE_TICKS = 5;
-  var clock = null;   // { mode: 'step' | 'play', frac, last, raf }
+  // ---------- The clock ----------
+  // The battle sims in real time until the next unit acts, then pauses on that action until Continue is
+  // clicked. The clock advances TICK_MS per tick, and charge bars fill smoothly between renders.
+  var TICK_MS = 60;
+  var clock = null;   // { frac, last, raf } while simming
 
-  function step(){
+  function continueBattle(){
     if (state.phase !== 'battle' || clock) return;
-    state.flash = [];
-    if (resolveNext()) return;   // more actions queued on this same tick: no time needs to pass
-    startClock('step');
+    if (resolveNext()) return;   // more units act on this same tick: show the next one without time passing
+    startClock();
   }
-  function togglePlay(){
-    if (state.phase !== 'battle') return;
-    if (clock && clock.mode === 'play'){ stopClock(); render(); return; }
-    if (clock){ clock.mode = 'play'; render(); return; }
-    // finish whatever is still queued on this tick before letting time run
-    state.flash = [];
-    while (state.phase === 'battle' && resolveNext()){}
-    if (state.phase === 'battle') startClock('play');
-  }
-  function startClock(mode){
-    clock = { mode: mode, frac: 0, last: performance.now() };
+  function startClock(){
+    clearFx();
+    clock = { frac: 0, last: performance.now() };
     render();
     clock.raf = requestAnimationFrame(frame);
   }
@@ -386,16 +394,13 @@
       if (state.tick >= SIM_TICKS){ stopClock(); timeUp(); return; }
       state.tick++;
       state.queue = actorsAt(state.tick);
-      if (!state.queue.length) continue;
-      state.flash = [];
-      if (c.mode === 'step'){ stopClock(); if (!resolveNext()) render(); return; }
-      while (state.phase === 'battle' && resolveNext()){}
-      if (state.phase !== 'battle'){ stopClock(); return; }
-      c.frac = -ACTION_PAUSE_TICKS;   // hold for a moment so the hits can be read
-      render();
-      break;
+      if (state.queue.length){
+        stopClock();
+        if (!resolveNext()) startClock();   // everyone queued had already died: keep simming
+        return;
+      }
     }
-    paintClock(state.tick + Math.max(0, c.frac));
+    paintClock(state.tick + c.frac);
     c.raf = requestAnimationFrame(frame);
   }
   // Updates just the moving parts (charge bars, tick counter, round clock) for a fractional tick t,
@@ -455,7 +460,7 @@
     if (u.card.lifesteal && state.players[side].units[slot] === u && u.hp < u.maxHp){
       var before = u.hp;
       u.hp = Math.min(u.maxHp, u.hp + Math.round(dealt * u.card.lifesteal));
-      if (u.hp > before) addLog('t' + state.tick + ': ' + label + ' drains ' + (u.hp - before) + ' HP.', 'heal');
+      if (u.hp > before){ state.fx.healed.push(u); addLog('t' + state.tick + ': ' + label + ' drains ' + (u.hp - before) + ' HP.', 'heal'); }
     }
   }
 
@@ -471,6 +476,7 @@
     var p = state.players[side], u = p.units[slot];
     var dealt = mitigated(amount, type, side, slot, armorPen);
     u.hp -= dealt;
+    state.fx.hit.push(u);
     var note = dealt === amount ? '' : ' (' + amount + ' ' + type + ', ' + (type === 'physical' ? 'armor' : 'MR') + ' blocked ' + (amount - dealt) + ')';
     addLog('t' + state.tick + ': ' + label + ' hits ' + p.name + "'s " + u.card.name + ' for ' + dealt + note + '.', 'attack');
     if (u.hp <= 0) killUnit(side, slot);
@@ -483,6 +489,7 @@
     if (u.card.revives && !u.revived){
       u.revived = true;
       u.hp = Math.ceil(u.maxHp / 2);
+      state.fx.healed.push(u);
       addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' bursts back to life with ' + u.hp + ' HP!', 'heal');
       return;
     }
@@ -503,6 +510,7 @@
     if (best === -1){ addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' has nothing to heal.', 'idle'); return; }
     var o = p.units[best], before = o.hp;
     o.hp = Math.min(o.maxHp, o.hp + u.card.ap);
+    state.fx.healed.push(o);
     addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' heals ' + o.card.name + ' for ' + (o.hp - before) + '.', 'heal');
   }
 
@@ -554,7 +562,8 @@
     });
     state.round++;
     state.tick = 0;
-    state.flash = [];
+    state.spotlight = null;
+    clearFx();
     state.phase = 'setup';
     state.inspected = null;
     addLog('Round ' + state.round + ': the board clears and last round\'s picks go to each discard pile.', 'meta');
@@ -594,8 +603,9 @@
     var cdPct = state.phase === 'battle' && isFinite(cd) ? (state.tick % cd) / cd : 0;
     var arm = armorOf(side, slot), mr = mrOf(side, slot);
     var buffed = arm !== card.armor || cd !== card.cooldown;
-    var acted = state.flash.indexOf(u) !== -1;
-    var tile = el('div', 'tile r-' + card.role + (isNext ? ' next' : '') + (acted ? ' acted' : ''), {
+    // one animation per tile: being hit wins over being healed, which wins over acting
+    var fx = state.fx.hit.indexOf(u) !== -1 ? ' hit' : state.fx.healed.indexOf(u) !== -1 ? ' healed' : state.fx.acted.indexOf(u) !== -1 ? ' acted' : '';
+    var tile = el('div', 'tile r-' + card.role + (isNext && !clock ? ' next' : '') + fx, {
       tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to take it off the board' : '')
     });
     tile.innerHTML = prioBadge(side, slot) + (isNext ? '<div class="next-tag">NEXT</div>' : '') +
@@ -731,17 +741,28 @@
     document.getElementById('nextPill').hidden = !next;
     if (next) document.getElementById('nextLabel').textContent = state.players[next.side].name + "'s " + state.players[next.side].units[next.slot].card.name + ' @ t' + next.tick;
     var main = document.getElementById('mainBtn');
-    main.textContent = state.phase === 'setup' ? 'Start battle' : state.phase === 'battle' ? 'Step ▶' : 'Next round';
+    main.textContent = state.phase === 'setup' ? 'Start battle' : state.phase === 'battle' ? (clock ? 'Simming…' : 'Continue ▶') : 'Next round';
     main.disabled = !!clock;
-    var battle = state.phase === 'battle';
-    var play = document.getElementById('playBtn');
-    play.hidden = !battle;
-    play.textContent = clock && clock.mode === 'play' ? 'Pause ❚❚' : 'Play ▶▶';
-    document.getElementById('finishBtn').hidden = !battle;
+  }
+
+  function renderAction(){
+    var panel = document.getElementById('actionPanel');
+    var body = document.getElementById('actionBody');
+    var sp = state.spotlight;
+    panel.className = 'action-panel' + (sp && sp.side != null ? ' p' + (sp.side + 1) : '');
+    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Place your units, then start the battle.</div>'; return; }
+    if (clock){ body.innerHTML = '<div class="action-wait">Simming… waiting for the next unit to act.</div>'; return; }
+    body.innerHTML = '';
+    if (!sp) return;
+    body.appendChild(el('div', 'action-title', {})).textContent = sp.title;
+    state.log.forEach(function(entry){
+      if (entry.seq >= sp.fromSeq) body.appendChild(el('div', 'action-line ' + entry.type, {})).textContent = entry.text.replace(/^t\d+: /, '');
+    });
   }
 
   function render(){
     var next = peekNextAction();
+    renderAction();
     renderHeader(next);
     renderPanel(0, next);
     renderPanel(1, next);
@@ -751,14 +772,10 @@
 
   document.getElementById('mainBtn').addEventListener('click', function(){
     if (state.phase === 'setup') startBattle();
-    else if (state.phase === 'battle') step();
+    else if (state.phase === 'battle') continueBattle();
     else nextRound();
   });
-  document.getElementById('playBtn').addEventListener('click', togglePlay);
-  document.getElementById('finishBtn').addEventListener('click', finishRound);
-  document.getElementById('resetBtn').addEventListener('click', function(){
-    if (confirm('Start a new game? The current game and score will be lost.')) newGame();
-  });
+  document.getElementById('resetBtn').addEventListener('click', newGame);
 
   newGame();
 })();
