@@ -79,6 +79,17 @@
   .bar.hp > div{ background:var(--heal); }
   .bar.hp.low > div{ background:var(--danger); }
   .bar.cd > div{ background:var(--side); opacity:.6; }
+  .bar.cd.full > div{ opacity:1; }
+  /* a unit pulses when its charge fills and it acts */
+  .tile.acted{ animation:acted .45s ease-out; }
+  @keyframes acted{
+    0%{ transform:scale(1); box-shadow:0 0 0 0 var(--role); }
+    35%{ transform:scale(1.07); box-shadow:0 0 0 5px var(--role); }
+    100%{ transform:scale(1); box-shadow:0 0 0 0 transparent; }
+  }
+  .round-progress{ width:90px; height:5px; border-radius:999px; background:var(--line); overflow:hidden; }
+  .round-progress > div{ height:100%; width:0; background:var(--text-dim); }
+  @media (prefers-reduced-motion: reduce){ .tile.acted{ animation:none; } }
   .slot-empty{
     position:relative; width:92px; min-height:118px; border-radius:10px; border:1px dashed var(--line); color:var(--text-dim);
     display:flex; align-items:center; justify-content:center; font-size:1.3rem;
@@ -115,10 +126,12 @@
     <span class="pill mono" title="Rounds won">P1 <b id="scoreLabel">0 – 0</b> P2</span>
     <span class="pill" id="phasePill"><b id="phaseLabel">Setup</b></span>
     <span class="pill mono" id="tickPill" hidden>Tick <b id="tickLabel">0</b>/60</span>
+    <div class="round-progress" id="roundProgress" hidden title="Round clock"><div id="roundFill"></div></div>
     <span class="pill" id="nextPill" hidden>Next: <b id="nextLabel"></b></span>
     <span class="spacer"></span>
     <button class="btn primary" id="mainBtn">Start battle</button>
-    <button class="btn small" id="finishBtn" hidden title="Resolve the rest of this round at once">Finish round</button>
+    <button class="btn small" id="playBtn" hidden title="Let the clock run, resolving actions as they come">Play ▶▶</button>
+    <button class="btn small ghost" id="finishBtn" hidden title="Resolve the rest of this round at once, without animation">Skip to end</button>
     <a class="btn ghost small" href="decks.html">Decks</a>
     <button class="btn ghost small" id="resetBtn">New game</button>
   </div>
@@ -171,9 +184,10 @@
     return { name: name, deck: buildDeck(recipe), discard: [], units: new Array(UNIT_SLOTS).fill(null) };
   }
   function newGame(){
+    stopClock();
     var recipes = loadDeckRecipes();
     state = {
-      round: 1, phase: 'setup', tick: 0, roundWins: [0, 0], log: [], queue: [],
+      round: 1, phase: 'setup', tick: 0, roundWins: [0, 0], log: [], queue: [], flash: [],
       selected: null,   // { side, pos } of the pick (a top-of-deck card) being placed
       inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
       players: [newPlayer('Player 1', recipes[0]), newPlayer('Player 2', recipes[1])]
@@ -300,22 +314,104 @@
     return null;
   }
 
-  // Resolves exactly one unit action (skipping over ticks where nobody acts).
-  function step(){
+  // Resolves the next queued action on the current tick. Queued units killed earlier this tick have left
+  // their slot empty and are skipped. Returns false if nothing was left to resolve on this tick.
+  function resolveNext(){
+    while (state.queue.length){
+      var a = state.queue.shift();
+      var u = state.players[a.side].units[a.slot];
+      if (!u) continue;
+      act(a.side, a.slot, u);
+      state.flash.push(u);
+      if (!checkForWipe()) render();
+      return true;
+    }
+    return false;
+  }
+  function timeUp(){ endRound(null, 'time ran out with units standing on both sides'); }
+
+  // Instant version: resolves exactly one action, jumping over ticks where nobody acts. Used by Skip to end.
+  function stepInstant(){
     if (state.phase !== 'battle') return;
     while (!state.queue.length){
-      if (state.tick >= SIM_TICKS){ endRound(null, 'time ran out with units standing on both sides'); return; }
+      if (state.tick >= SIM_TICKS){ timeUp(); return; }
       state.tick++;
       state.queue = actorsAt(state.tick);
     }
-    var a = state.queue.shift();
-    var u = state.players[a.side].units[a.slot];
-    if (u) act(a.side, a.slot, u);   // a unit killed earlier this tick has left its slot empty
-    if (checkForWipe()) return;
-    render();
+    resolveNext();
   }
   function finishRound(){
-    for (var guard = 0; state.phase === 'battle' && guard < 1000; guard++) step();
+    stopClock();
+    for (var guard = 0; state.phase === 'battle' && guard < 1000; guard++) stepInstant();
+  }
+
+  // ---------- The animated clock ----------
+  // Time really flows: the clock advances TICK_MS per tick and every charge bar fills smoothly between
+  // renders. Step runs the clock to the next action and resolves it; Play keeps it running, pausing briefly
+  // after each tick with actions so the hits can be read.
+  var TICK_MS = 60, ACTION_PAUSE_TICKS = 5;
+  var clock = null;   // { mode: 'step' | 'play', frac, last, raf }
+
+  function step(){
+    if (state.phase !== 'battle' || clock) return;
+    state.flash = [];
+    if (resolveNext()) return;   // more actions queued on this same tick: no time needs to pass
+    startClock('step');
+  }
+  function togglePlay(){
+    if (state.phase !== 'battle') return;
+    if (clock && clock.mode === 'play'){ stopClock(); render(); return; }
+    if (clock){ clock.mode = 'play'; render(); return; }
+    // finish whatever is still queued on this tick before letting time run
+    state.flash = [];
+    while (state.phase === 'battle' && resolveNext()){}
+    if (state.phase === 'battle') startClock('play');
+  }
+  function startClock(mode){
+    clock = { mode: mode, frac: 0, last: performance.now() };
+    render();
+    clock.raf = requestAnimationFrame(frame);
+  }
+  function stopClock(){
+    if (clock && clock.raf) cancelAnimationFrame(clock.raf);
+    clock = null;
+  }
+  function frame(now){
+    var c = clock;
+    if (!c) return;
+    c.frac += (now - c.last) / TICK_MS;
+    c.last = now;
+    while (c.frac >= 1){
+      c.frac -= 1;
+      if (state.tick >= SIM_TICKS){ stopClock(); timeUp(); return; }
+      state.tick++;
+      state.queue = actorsAt(state.tick);
+      if (!state.queue.length) continue;
+      state.flash = [];
+      if (c.mode === 'step'){ stopClock(); if (!resolveNext()) render(); return; }
+      while (state.phase === 'battle' && resolveNext()){}
+      if (state.phase !== 'battle'){ stopClock(); return; }
+      c.frac = -ACTION_PAUSE_TICKS;   // hold for a moment so the hits can be read
+      render();
+      break;
+    }
+    paintClock(state.tick + Math.max(0, c.frac));
+    c.raf = requestAnimationFrame(frame);
+  }
+  // Updates just the moving parts (charge bars, tick counter, round clock) for a fractional tick t,
+  // without rebuilding the board.
+  function paintClock(t){
+    document.querySelectorAll('[data-charge]').forEach(function(fill){
+      var parts = fill.getAttribute('data-charge').split('-');
+      var side = +parts[0], slot = +parts[1];
+      if (!state.players[side].units[slot]) return;
+      var cd = cooldownOf(side, slot);
+      var pct = isFinite(cd) ? (t % cd) / cd : 0;
+      fill.style.width = (pct * 100) + '%';
+      fill.parentNode.classList.toggle('full', pct > .85);
+    });
+    document.getElementById('tickLabel').textContent = Math.floor(t);
+    document.getElementById('roundFill').style.width = (Math.min(t, SIM_TICKS) / SIM_TICKS * 100) + '%';
   }
 
   function act(side, slot, u){
@@ -422,6 +518,7 @@
     return true;
   }
   function endRound(winner, tieReason){
+    stopClock();
     state.queue = [];
     if (winner === null){
       addLog('Round ' + state.round + ' is a tie — ' + tieReason + '.', 'win');
@@ -457,6 +554,7 @@
     });
     state.round++;
     state.tick = 0;
+    state.flash = [];
     state.phase = 'setup';
     state.inspected = null;
     addLog('Round ' + state.round + ': the board clears and last round\'s picks go to each discard pile.', 'meta');
@@ -496,7 +594,8 @@
     var cdPct = state.phase === 'battle' && isFinite(cd) ? (state.tick % cd) / cd : 0;
     var arm = armorOf(side, slot), mr = mrOf(side, slot);
     var buffed = arm !== card.armor || cd !== card.cooldown;
-    var tile = el('div', 'tile r-' + card.role + (isNext ? ' next' : ''), {
+    var acted = state.flash.indexOf(u) !== -1;
+    var tile = el('div', 'tile r-' + card.role + (isNext ? ' next' : '') + (acted ? ' acted' : ''), {
       tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to take it off the board' : '')
     });
     tile.innerHTML = prioBadge(side, slot) + (isNext ? '<div class="next-tag">NEXT</div>' : '') +
@@ -504,7 +603,7 @@
       '<div class="line mono' + (buffed ? ' buff' : '') + '" title="Armor and magic resist, including buffs from neighbours">ARM ' + arm + ' · MR ' + mr + '</div>' +
       '<div class="line mono">' + u.hp + '/' + u.maxHp + ' HP</div>' +
       '<div class="bar hp' + (hpPct < .34 ? ' low' : '') + '"><div style="width:' + (hpPct * 100) + '%"></div></div>' +
-      '<div class="bar cd"><div style="width:' + (cdPct * 100) + '%"></div></div>';
+      '<div class="bar cd" title="Charge — acts when full"><div data-charge="' + side + '-' + slot + '" style="width:' + (cdPct * 100) + '%"></div></div>';
     tile.addEventListener('click', function(){ onSlotClick(side, slot); });
     return tile;
   }
@@ -627,11 +726,18 @@
     document.getElementById('phaseLabel').textContent = PHASE_LABEL[state.phase];
     document.getElementById('tickPill').hidden = state.phase === 'setup';
     document.getElementById('tickLabel').textContent = state.tick;
+    document.getElementById('roundProgress').hidden = state.phase === 'setup';
+    document.getElementById('roundFill').style.width = (state.tick / SIM_TICKS * 100) + '%';
     document.getElementById('nextPill').hidden = !next;
     if (next) document.getElementById('nextLabel').textContent = state.players[next.side].name + "'s " + state.players[next.side].units[next.slot].card.name + ' @ t' + next.tick;
     var main = document.getElementById('mainBtn');
     main.textContent = state.phase === 'setup' ? 'Start battle' : state.phase === 'battle' ? 'Step ▶' : 'Next round';
-    document.getElementById('finishBtn').hidden = state.phase !== 'battle';
+    main.disabled = !!clock;
+    var battle = state.phase === 'battle';
+    var play = document.getElementById('playBtn');
+    play.hidden = !battle;
+    play.textContent = clock && clock.mode === 'play' ? 'Pause ❚❚' : 'Play ▶▶';
+    document.getElementById('finishBtn').hidden = !battle;
   }
 
   function render(){
@@ -648,6 +754,7 @@
     else if (state.phase === 'battle') step();
     else nextRound();
   });
+  document.getElementById('playBtn').addEventListener('click', togglePlay);
   document.getElementById('finishBtn').addEventListener('click', finishRound);
   document.getElementById('resetBtn').addEventListener('click', function(){
     if (confirm('Start a new game? The current game and score will be lost.')) newGame();
