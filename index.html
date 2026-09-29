@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fd7</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="shared.css">
+<style>
+  .battlefield{
+    flex:1 1 auto; min-height:0; width:100%; max-width:1300px; margin:0 auto; padding:10px 14px;
+    display:grid; grid-template-columns:1fr minmax(240px, 300px) 1fr; gap:12px;
+  }
+  .panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 12px;
+    display:flex; flex-direction:column; gap:10px; min-height:0; border-top:3px solid var(--side);
+  }
+  .panel.p1{ --side:var(--p1); --side-bg:var(--p1-bg); }
+  .panel.p2{ --side:var(--p2); --side-bg:var(--p2-bg); }
+  .panel-head{ display:flex; align-items:center; gap:8px; }
+  .panel-title{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.95rem; color:var(--side); flex:1 1 auto; }
+  .row-label{ font-size:.6rem; text-transform:uppercase; letter-spacing:.07em; color:var(--text-dim); margin-bottom:4px; }
+  .row{ display:flex; flex-wrap:wrap; gap:8px; }
+  .hand-section{ flex:1 1 auto; min-height:0; overflow-y:auto; }
+
+  /* card tiles, used for board units, empty slots and hand cards */
+  .tile{
+    position:relative; width:92px; min-height:118px; border-radius:10px; border:1px solid var(--line);
+    background:var(--panel-2); padding:7px 6px 6px; display:flex; flex-direction:column; align-items:center; gap:3px;
+    border-top:3px solid var(--role); cursor:pointer; user-select:none;
+  }
+  .tile.r-attacker{ --role:var(--danger); }
+  .tile.r-healer{ --role:var(--heal); }
+  .tile.r-tank{ --role:var(--tank); }
+  .tile .icon{ font-size:1.4rem; line-height:1.1; }
+  .tile .name{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.76rem; text-align:center; line-height:1.1; }
+  .tile .line{ font-size:.64rem; color:var(--text-dim); }
+  .tile .line.hot{ color:var(--role); font-weight:600; }
+  .tile.selected{ outline:2px solid var(--side); outline-offset:2px; background:var(--side-bg); }
+  .tile.next{ box-shadow:0 0 0 2px var(--side); }
+  .next-tag{
+    position:absolute; top:-8px; left:50%; transform:translateX(-50%); font-family:'Chakra Petch',sans-serif;
+    font-weight:700; font-size:.55rem; letter-spacing:.08em; padding:0 6px; border-radius:999px; background:var(--side); color:var(--bg);
+  }
+  .bar{ width:100%; height:4px; border-radius:999px; background:var(--line); overflow:hidden; margin-top:auto; }
+  .bar + .bar{ margin-top:2px; }
+  .bar > div{ height:100%; }
+  .bar.hp > div{ background:var(--heal); }
+  .bar.hp.low > div{ background:var(--danger); }
+  .bar.cd > div{ background:var(--side); opacity:.6; }
+  .slot-empty{
+    width:92px; min-height:118px; border-radius:10px; border:1px dashed var(--line); color:var(--text-dim);
+    display:flex; align-items:center; justify-content:center; font-size:1.3rem;
+  }
+  .slot-empty.valid{ border-color:var(--side); color:var(--side); background:var(--side-bg); cursor:pointer; }
+  .empty-note{ font-size:.72rem; color:var(--text-dim); font-style:italic; }
+
+  .center-col{ display:flex; flex-direction:column; gap:10px; min-height:0; }
+  .log-panel{
+    flex:1 1 auto; min-height:120px; background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .log-head{ padding:7px 10px; font-size:.66rem; text-transform:uppercase; letter-spacing:.07em; color:var(--text-dim); border-bottom:1px solid var(--line); }
+  .log-body{ flex:1 1 auto; overflow-y:auto; padding:6px 10px; font-size:.7rem; line-height:1.4; }
+  .log-line.attack{ color:var(--danger); }
+  .log-line.heal{ color:var(--heal); }
+  .log-line.destroy{ font-weight:600; }
+  .log-line.win{ font-weight:700; color:var(--text); }
+  .log-line.idle, .log-line.meta{ color:var(--text-dim); }
+
+  @media (max-width:900px){
+    .battlefield{ grid-template-columns:1fr; }
+    .center-col{ order:3; }
+    .log-panel{ max-height:260px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">fd7</div>
+    <span class="pill">Round <b id="roundLabel">1</b></span>
+    <span class="pill mono" title="Rounds won">P1 <b id="scoreLabel">0 – 0</b> P2</span>
+    <span class="pill" id="phasePill"><b id="phaseLabel">Setup</b></span>
+    <span class="pill mono" id="tickPill" hidden>Tick <b id="tickLabel">0</b>/60</span>
+    <span class="pill" id="nextPill" hidden>Next: <b id="nextLabel"></b></span>
+    <span class="spacer"></span>
+    <button class="btn primary" id="mainBtn">Start battle</button>
+    <button class="btn small" id="finishBtn" hidden title="Resolve the rest of this round at once">Finish round</button>
+    <a class="btn ghost small" href="decks.html">Decks</a>
+    <button class="btn ghost small" id="resetBtn">New game</button>
+  </div>
+</header>
+
+<main class="battlefield">
+  <section class="panel p1" id="panel-0"></section>
+  <div class="center-col">
+    <div class="inspector" id="inspector">
+      <div class="inspector-head">Card Info</div>
+      <div id="inspectorBody"></div>
+    </div>
+    <div class="log-panel">
+      <div class="log-head">Battle Log</div>
+      <div class="log-body" id="logBody"></div>
+    </div>
+  </div>
+  <section class="panel p2" id="panel-1"></section>
+</main>
+
+<script src="shared.js"></script>
+<script>
+(function(){
+  var UNIT_SLOTS = 3, SIM_TICKS = 60, DRAW_PER_ROUND = 3;
+  var PREDATOR_DEATH_AOE = 5;
+  var state;
+  var cardUid = 0;
+
+  // ---------- Setup of a game ----------
+  function makeCard(key){
+    var c = { uid: 'c' + (cardUid++) };
+    var def = CARD_DEFS[key];
+    for (var k in def) c[k] = def[k];
+    return c;
+  }
+  function shuffle(arr){
+    for (var i = arr.length - 1; i > 0; i--){
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    }
+    return arr;
+  }
+  function buildDeck(recipe){
+    var deck = [];
+    Object.keys(recipe).forEach(function(k){ for (var i = 0; i < recipe[k]; i++) deck.push(makeCard(k)); });
+    return shuffle(deck);
+  }
+  function newPlayer(name, recipe){
+    return { name: name, deck: buildDeck(recipe), hand: [], grave: [], units: new Array(UNIT_SLOTS).fill(null) };
+  }
+  function newGame(){
+    var recipes = loadDeckRecipes();
+    state = {
+      round: 1, phase: 'setup', tick: 0, roundWins: [0, 0], log: [], queue: [],
+      selected: null,   // { side, idx } of the hand card being placed
+      inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
+      players: [newPlayer('Player 1', recipes[0]), newPlayer('Player 2', recipes[1])]
+    };
+    state.players.forEach(function(p){ drawCards(p, INITIAL_HAND); });
+    addLog('Round 1: place up to ' + UNIT_SLOTS + ' units each, then start the battle.', 'meta');
+    render();
+  }
+
+  function addLog(text, type){
+    state.log.push({ text: text, type: type || 'meta' });
+    if (state.log.length > 300) state.log.shift();
+  }
+
+  // An empty deck is refilled from the graveyard, so play can go on forever.
+  function drawCards(p, n){
+    for (var i = 0; i < n; i++){
+      if (!p.deck.length){
+        if (!p.grave.length) return;
+        p.deck = shuffle(p.grave);
+        p.grave = [];
+        addLog(p.name + ' shuffles their graveyard back into the deck.', 'meta');
+      }
+      p.hand.push(p.deck.pop());
+    }
+  }
+
+  // ---------- Setup phase: placing units ----------
+  function onHandClick(side, idx){
+    state.inspected = { card: state.players[side].hand[idx], side: side };
+    if (state.phase === 'setup'){
+      var sel = state.selected;
+      state.selected = (sel && sel.side === side && sel.idx === idx) ? null : { side: side, idx: idx };
+    }
+    render();
+  }
+  function onHandDoubleClick(side, idx){
+    if (state.phase !== 'setup') return;
+    var slot = state.players[side].units.indexOf(null);
+    if (slot !== -1) placeUnit(side, idx, slot);
+  }
+  function onSlotClick(side, slot){
+    var p = state.players[side];
+    var u = p.units[slot];
+    if (u){
+      state.inspected = { card: u.card, side: side, slot: slot };
+      // during setup, clicking a placed unit returns it to hand
+      if (state.phase === 'setup'){ p.hand.push(u.card); p.units[slot] = null; state.selected = null; }
+      render();
+      return;
+    }
+    if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.idx, slot);
+  }
+  function placeUnit(side, handIdx, slot){
+    var p = state.players[side];
+    var card = p.hand.splice(handIdx, 1)[0];
+    p.units[slot] = { card: card, hp: card.hp, maxHp: card.hp, taunting: false };
+    state.selected = null;
+    state.inspected = { card: card, side: side, slot: slot };
+    render();
+  }
+
+  // ---------- Battle ----------
+  function startBattle(){
+    if (state.phase !== 'setup') return;
+    state.phase = 'battle';
+    state.tick = 0;
+    state.queue = [];
+    state.selected = null;
+    addLog('Round ' + state.round + ': battle begins.', 'meta');
+    state.players.forEach(function(p){
+      var alive = p.units.filter(Boolean);
+      if (alive.length === 1 && alive[0].card.key === 'bulwark'){
+        var b = alive[0];
+        b.maxHp *= 2; b.hp *= 2; b.taunting = true;
+        addLog(p.name + "'s Bulwark stands alone — it doubles its HP to " + b.hp + ' and taunts.', 'meta');
+      }
+    });
+    if (!checkForWipe()) render();   // a side that fielded no units loses on the spot
+  }
+
+  // The side that acts first on tied ticks alternates each round; within a tick, slots go left to right,
+  // alternating sides: first side's slot 1, other side's slot 1, first side's slot 2, ...
+  function firstSide(){ return (state.round - 1) % 2; }
+  function actorsAt(t){
+    var order = [], f = firstSide();
+    for (var slot = 0; slot < UNIT_SLOTS; slot++){
+      [f, 1 - f].forEach(function(side){
+        var u = state.players[side].units[slot];
+        if (u && isFinite(u.card.cooldown) && t % u.card.cooldown === 0) order.push({ side: side, slot: slot, tick: t });
+      });
+    }
+    return order;
+  }
+  function peekNextAction(){
+    if (state.phase !== 'battle') return null;
+    if (state.queue.length) return state.queue[0];
+    for (var t = state.tick + 1; t <= SIM_TICKS; t++){
+      var q = actorsAt(t);
+      if (q.length) return q[0];
+    }
+    return null;
+  }
+
+  // Resolves exactly one unit action (skipping over ticks where nobody acts).
+  function step(){
+    if (state.phase !== 'battle') return;
+    while (!state.queue.length){
+      if (state.tick >= SIM_TICKS){ endRound(null, 'time ran out with units standing on both sides'); return; }
+      state.tick++;
+      state.queue = actorsAt(state.tick);
+    }
+    var a = state.queue.shift();
+    var u = state.players[a.side].units[a.slot];
+    if (u) act(a.side, a.slot, u);   // a unit killed earlier this tick has left its slot empty
+    if (checkForWipe()) return;
+    render();
+  }
+  function finishRound(){
+    for (var guard = 0; state.phase === 'battle' && guard < 1000; guard++) step();
+  }
+
+  function act(side, slot, u){
+    if (u.card.role === 'attacker') attack(side, u);
+    else if (u.card.role === 'healer') heal(side, u);
+  }
+
+  // Taunt beats everything; otherwise attacks go at the left-most unit, unless a Bodyguard steps in.
+  function pickTarget(dp){
+    var taunt = -1, first = -1, guard = -1;
+    dp.units.forEach(function(u, i){
+      if (!u) return;
+      if (u.taunting && taunt === -1) taunt = i;
+      if (first === -1) first = i;
+      if (u.card.key === 'bodyguard' && guard === -1) guard = i;
+    });
+    if (taunt !== -1) return { slot: taunt };
+    if (guard !== -1 && guard !== first) return { slot: guard, shielded: first };
+    return first === -1 ? null : { slot: first };
+  }
+
+  function attack(side, u){
+    var dSide = 1 - side, dp = state.players[dSide];
+    var target = pickTarget(dp);
+    if (!target) return;
+    if (target.shielded !== undefined) addLog('t' + state.tick + ': ' + dp.name + "'s Bodyguard steps in front of " + dp.units[target.shielded].card.name + '.', 'meta');
+    dealDamage(dSide, target.slot, u.card.ad, 'physical', state.players[side].name + "'s " + u.card.name);
+  }
+
+  // Physical damage is reduced by armor, magic by MR, true damage by nothing:
+  // taken = dmg × 100 / (100 + resist), rounded, at least 1.
+  function mitigated(amount, type, u){
+    if (amount <= 0) return 0;
+    var resist = type === 'physical' ? u.card.armor : type === 'magic' ? u.card.mr : 0;
+    return Math.max(1, Math.round(amount * 100 / (100 + resist)));
+  }
+  function dealDamage(side, slot, amount, type, label){
+    var p = state.players[side], u = p.units[slot];
+    var dealt = mitigated(amount, type, u);
+    u.hp -= dealt;
+    var note = dealt === amount ? '' : ' (' + amount + ' ' + type + ', ' + (type === 'physical' ? 'armor' : 'MR') + ' blocked ' + (amount - dealt) + ')';
+    addLog('t' + state.tick + ': ' + label + ' hits ' + p.name + "'s " + u.card.name + ' for ' + dealt + note + '.', 'attack');
+    if (u.hp <= 0) killUnit(side, slot);
+  }
+
+  function killUnit(side, slot){
+    var p = state.players[side], u = p.units[slot];
+    if (!u) return;
+    p.units[slot] = null;
+    p.grave.push(u.card);
+    addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' is destroyed.', 'destroy');
+    if (u.card.key === 'predator'){
+      p.units.forEach(function(other, i){
+        if (other) dealDamage(side, i, PREDATOR_DEATH_AOE, 'true', p.name + "'s dying Predator");
+      });
+    }
+  }
+
+  function heal(side, u){
+    var p = state.players[side], best = -1, bestPct = 1;
+    p.units.forEach(function(o, i){
+      if (o && o.hp < o.maxHp && o.hp / o.maxHp < bestPct){ bestPct = o.hp / o.maxHp; best = i; }
+    });
+    if (best === -1){ addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' has nothing to heal.', 'idle'); return; }
+    var o = p.units[best], before = o.hp;
+    o.hp = Math.min(o.maxHp, o.hp + u.card.ap);
+    addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' heals ' + o.card.name + ' for ' + (o.hp - before) + '.', 'heal');
+  }
+
+  // ---------- Rounds ----------
+  // Wiping out every enemy unit wins the round. Time running out, or both sides wiped at once, is a tie.
+  // There is no match limit: rounds just keep going and the score keeps counting.
+  function livingUnits(p){ return p.units.filter(Boolean).length; }
+  function checkForWipe(){
+    if (state.phase !== 'battle') return false;
+    var alive = state.players.map(livingUnits);
+    if (alive[0] && alive[1]) return false;
+    endRound(alive[0] ? 0 : alive[1] ? 1 : null, 'both sides were wiped out');
+    return true;
+  }
+  function endRound(winner, tieReason){
+    state.queue = [];
+    if (winner === null){
+      addLog('Round ' + state.round + ' is a tie — ' + tieReason + '.', 'win');
+    } else {
+      state.roundWins[winner]++;
+      addLog(state.players[1 - winner].name + ' has no units left — ' + state.players[winner].name + ' wins round ' + state.round +
+        '. Score ' + state.roundWins[0] + '–' + state.roundWins[1] + '.', 'win');
+    }
+    state.phase = 'roundEnd';
+    render();
+  }
+  // Every round is a fresh fight: survivors go to the graveyard, then each player draws.
+  function nextRound(){
+    if (state.phase !== 'roundEnd') return;
+    state.players.forEach(function(p){
+      p.units.forEach(function(u){ if (u) p.grave.push(u.card); });
+      p.units = new Array(UNIT_SLOTS).fill(null);
+    });
+    state.round++;
+    state.tick = 0;
+    state.phase = 'setup';
+    state.inspected = null;
+    addLog('Round ' + state.round + ': the board is cleared and each player draws ' + DRAW_PER_ROUND + '.', 'meta');
+    state.players.forEach(function(p){ drawCards(p, DRAW_PER_ROUND); });
+    render();
+  }
+
+  // ---------- Rendering ----------
+  var PHASE_LABEL = { setup: 'Setup', battle: 'Battle', roundEnd: 'Round over' };
+
+  function roleLine(card, u){
+    if (u && u.taunting) return '<div class="line hot">TAUNT</div>';
+    if (card.role === 'attacker') return '<div class="line hot mono">AD ' + card.ad + '</div>';
+    if (card.role === 'healer') return '<div class="line hot mono">AP ' + card.ap + '</div>';
+    return '<div class="line hot mono">ARM ' + card.armor + '</div>';
+  }
+
+  function renderUnit(side, slot, next){
+    var p = state.players[side], u = p.units[slot];
+    if (!u){
+      var valid = state.phase === 'setup' && state.selected && state.selected.side === side;
+      var empty = el('div', 'slot-empty' + (valid ? ' valid' : ''), valid ? { tabindex: '0', role: 'button', 'aria-label': 'Place here' } : {});
+      empty.textContent = '+';
+      empty.addEventListener('click', function(){ onSlotClick(side, slot); });
+      return empty;
+    }
+    var card = u.card;
+    var isNext = !!(next && next.side === side && next.slot === slot);
+    var hpPct = Math.max(0, u.hp / u.maxHp);
+    var cdPct = state.phase === 'battle' && isFinite(card.cooldown) ? (state.tick % card.cooldown) / card.cooldown : 0;
+    var tile = el('div', 'tile r-' + card.role + (isNext ? ' next' : ''), {
+      tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to return to hand' : '')
+    });
+    tile.innerHTML = (isNext ? '<div class="next-tag">NEXT</div>' : '') +
+      '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u) +
+      '<div class="line mono">' + u.hp + '/' + u.maxHp + '</div>' +
+      '<div class="bar hp' + (hpPct < .34 ? ' low' : '') + '"><div style="width:' + (hpPct * 100) + '%"></div></div>' +
+      '<div class="bar cd"><div style="width:' + (cdPct * 100) + '%"></div></div>';
+    tile.addEventListener('click', function(){ onSlotClick(side, slot); });
+    return tile;
+  }
+
+  function renderHandCard(side, idx){
+    var card = state.players[side].hand[idx];
+    var sel = state.selected && state.selected.side === side && state.selected.idx === idx;
+    var tile = el('div', 'tile r-' + card.role + (sel ? ' selected' : ''), {
+      tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to select, double-click to place' : '')
+    });
+    tile.innerHTML = '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card) +
+      '<div class="line mono">HP ' + card.hp + '</div>';
+    tile.addEventListener('click', function(){ onHandClick(side, idx); });
+    tile.addEventListener('dblclick', function(){ onHandDoubleClick(side, idx); });
+    tile.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); onHandClick(side, idx); } });
+    return tile;
+  }
+
+  function renderPanel(side, next){
+    var p = state.players[side];
+    var panel = document.getElementById('panel-' + side);
+    panel.innerHTML =
+      '<div class="panel-head"><div class="panel-title">' + p.name + '</div>' +
+      '<span class="pill mono" title="Cards left in deck">Deck ' + p.deck.length + '</span>' +
+      '<span class="pill mono" title="Cards in graveyard">Grave ' + p.grave.length + '</span></div>';
+    var unitsSec = panel.appendChild(el('div', '', {}));
+    unitsSec.appendChild(el('div', 'row-label', {})).textContent = 'Units';
+    var unitsRow = unitsSec.appendChild(el('div', 'row', {}));
+    for (var slot = 0; slot < UNIT_SLOTS; slot++) unitsRow.appendChild(renderUnit(side, slot, next));
+    var handSec = panel.appendChild(el('div', 'hand-section', {}));
+    handSec.appendChild(el('div', 'row-label', {})).textContent = 'Hand (' + p.hand.length + ')';
+    var handRow = handSec.appendChild(el('div', 'row', {}));
+    if (!p.hand.length) handRow.appendChild(el('div', 'empty-note', {})).textContent = 'No cards in hand.';
+    p.hand.forEach(function(_, i){ handRow.appendChild(renderHandCard(side, i)); });
+  }
+
+  function renderInspector(){
+    var box = document.getElementById('inspector');
+    var body = document.getElementById('inspectorBody');
+    var ins = state.inspected;
+    if (!ins){
+      box.className = 'inspector';
+      body.innerHTML = '<div class="inspector-empty">Click any card to see its stats.</div>';
+      return;
+    }
+    box.className = 'inspector r-' + ins.card.role;
+    var html = cardInfoHtml(ins.card);
+    var u = ins.slot != null ? state.players[ins.side].units[ins.slot] : null;
+    if (u && u.card === ins.card){
+      var live = ['On ' + state.players[ins.side].name + "'s board", 'HP ' + u.hp + '/' + u.maxHp];
+      if (u.taunting) live.push('Taunting');
+      if (isFinite(u.card.cooldown)) live.push('Acts every ' + u.card.cooldown + ' ticks');
+      html += '<div class="inspector-live">' + live.join(' · ') + '</div>';
+    }
+    body.innerHTML = html;
+  }
+
+  function renderLog(){
+    var body = document.getElementById('logBody');
+    body.innerHTML = '';
+    state.log.forEach(function(entry){ body.appendChild(el('div', 'log-line ' + entry.type, {})).textContent = entry.text; });
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function renderHeader(next){
+    document.getElementById('roundLabel').textContent = state.round;
+    document.getElementById('scoreLabel').textContent = state.roundWins[0] + ' – ' + state.roundWins[1];
+    document.getElementById('phaseLabel').textContent = PHASE_LABEL[state.phase];
+    document.getElementById('tickPill').hidden = state.phase === 'setup';
+    document.getElementById('tickLabel').textContent = state.tick;
+    document.getElementById('nextPill').hidden = !next;
+    if (next) document.getElementById('nextLabel').textContent = state.players[next.side].name + "'s " + state.players[next.side].units[next.slot].card.name + ' @ t' + next.tick;
+    var main = document.getElementById('mainBtn');
+    main.textContent = state.phase === 'setup' ? 'Start battle' : state.phase === 'battle' ? 'Step ▶' : 'Next round';
+    document.getElementById('finishBtn').hidden = state.phase !== 'battle';
+  }
+
+  function render(){
+    var next = peekNextAction();
+    renderHeader(next);
+    renderPanel(0, next);
+    renderPanel(1, next);
+    renderInspector();
+    renderLog();
+  }
+
+  document.getElementById('mainBtn').addEventListener('click', function(){
+    if (state.phase === 'setup') startBattle();
+    else if (state.phase === 'battle') step();
+    else nextRound();
+  });
+  document.getElementById('finishBtn').addEventListener('click', finishRound);
+  document.getElementById('resetBtn').addEventListener('click', function(){
+    if (confirm('Start a new game? The current game and score will be lost.')) newGame();
+  });
+
+  newGame();
+})();
+</script>
+</body>
+</html>

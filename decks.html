@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deck Builder · fd7</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="shared.css">
+<style>
+  .deck-tabs{ display:flex; gap:4px; }
+  .deck-tab.active{ background:var(--text); color:var(--bg); border-color:var(--text); }
+
+  .builder{ flex:1 1 auto; min-height:0; max-width:1100px; width:100%; margin:0 auto; padding:10px 14px; display:flex; gap:12px; }
+  .pane{ background:var(--panel); border:1px solid var(--line); border-radius:12px; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+  .pool-pane{ flex:1 1 58%; }
+  .side-col{ flex:1 1 42%; display:flex; flex-direction:column; gap:12px; min-height:0; }
+  .side-col .inspector{ height:150px; overflow-y:auto; }   /* fixed so hovering doesn't shift the deck list */
+  .deck-pane{ flex:1 1 auto; }
+  .pane-head{ padding:10px 12px; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:6px; }
+  .pane-title{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.85rem; letter-spacing:.03em; text-transform:uppercase; color:var(--text-dim); }
+  .deck-summary{ font-size:.72rem; color:var(--text-dim); }
+  .deck-summary.warn{ color:var(--danger); }
+  .pane-list{ flex:1 1 auto; min-height:0; overflow-y:auto; }
+  .deck-actions{ display:flex; gap:6px; flex-wrap:wrap; padding:8px 12px; border-bottom:1px solid var(--line); }
+  .empty-msg{ font-size:.75rem; color:var(--text-dim); font-style:italic; padding:20px 14px; text-align:center; }
+
+  .row-card{ display:flex; align-items:center; gap:8px; padding:8px 12px 8px 9px; border-top:1px solid var(--line); border-left:3px solid var(--role); }
+  .row-card:first-child{ border-top:none; }
+  .row-card.r-attacker{ --role:var(--danger); }
+  .row-card.r-healer{ --role:var(--heal); }
+  .row-card.r-tank{ --role:var(--tank); }
+  .row-card .icon{ width:24px; text-align:center; font-size:1.1rem; }
+  .row-card .info{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:3px; }
+  .row-card .name{ font-weight:600; font-size:.82rem; }
+  .row-card .name small{ font-weight:500; color:var(--text-dim); margin-left:6px; font-size:.68rem; }
+  .row-card .pills{ display:flex; gap:4px; flex-wrap:wrap; }
+  .row-card .fx{ font-size:.7rem; color:var(--text-dim); }
+  .stepper{ display:flex; align-items:center; gap:2px; }
+  .stepper button{ width:24px; height:24px; padding:0; justify-content:center; font-size:.9rem; }
+  .stepper b{ width:26px; text-align:center; font-size:.85rem; }
+
+  @media (max-width:820px){
+    body{ height:auto; }
+    .builder{ flex-direction:column; }
+    .pane{ max-height:70vh; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">fd7 · decks</div>
+    <div class="deck-tabs" role="tablist">
+      <button class="btn small deck-tab" id="deckTab0" role="tab">Player 1</button>
+      <button class="btn small deck-tab" id="deckTab1" role="tab">Player 2</button>
+    </div>
+    <span class="spacer"></span>
+    <a class="btn ghost small" href="index.html">← Back to game</a>
+    <button class="btn primary" id="deckApply">Apply &amp; New Game</button>
+  </div>
+</header>
+
+<main class="builder">
+  <section class="pane pool-pane">
+    <div class="pane-head"><div class="pane-title">Card pool</div></div>
+    <div class="pane-list" id="poolList"></div>
+  </section>
+
+  <div class="side-col">
+    <div class="inspector" id="inspector">
+      <div class="inspector-head">Card Info</div>
+      <div id="inspectorBody"><div class="inspector-empty">Hover a card to see its details.</div></div>
+    </div>
+    <section class="pane deck-pane">
+      <div class="pane-head">
+        <div class="pane-title">Your deck</div>
+        <div class="deck-summary mono" id="deckSummary"></div>
+      </div>
+      <div class="deck-actions">
+        <button class="btn small" id="deckCopy">Copy from other player</button>
+        <button class="btn small" id="deckDefault">Reset to default</button>
+        <button class="btn small" id="deckClear">Clear all</button>
+      </div>
+      <div class="pane-list" id="deckList"></div>
+    </section>
+  </div>
+</main>
+
+<script src="shared.js"></script>
+<script>
+(function(){
+  var recipes = loadDeckRecipes();
+  var side = 0;
+
+  function inspect(key){
+    document.getElementById('inspector').className = 'inspector r-' + CARD_DEFS[key].role;
+    document.getElementById('inspectorBody').innerHTML = cardInfoHtml(CARD_DEFS[key]);
+  }
+  function change(key, delta){
+    var r = recipes[side];
+    r[key] = Math.max(0, Math.min(MAX_COPIES, r[key] + delta));
+    render();
+  }
+
+  function cardRow(key, withDetails){
+    var card = CARD_DEFS[key], qty = recipes[side][key];
+    var row = el('div', 'row-card r-' + card.role, {});
+    row.innerHTML =
+      '<div class="icon">' + card.icon + '</div>' +
+      '<div class="info"><div class="name">' + card.name + '<small>' + roleLabel(card) + '</small></div>' +
+      (withDetails
+        ? '<div class="pills">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
+          '<div class="fx">' + card.effect + '</div>'
+        : '') +
+      '</div>' +
+      '<div class="stepper"><button class="btn" type="button" aria-label="Remove one ' + card.name + '">−</button>' +
+      '<b class="mono">' + qty + '</b><button class="btn" type="button" aria-label="Add one ' + card.name + '">+</button></div>';
+    var btns = row.querySelectorAll('button');
+    btns[0].disabled = qty <= 0;
+    btns[1].disabled = qty >= MAX_COPIES;
+    btns[0].addEventListener('click', function(){ change(key, -1); });
+    btns[1].addEventListener('click', function(){ change(key, 1); });
+    row.addEventListener('mouseenter', function(){ inspect(key); });
+    row.addEventListener('focusin', function(){ inspect(key); });
+    return row;
+  }
+
+  function render(){
+    [0, 1].forEach(function(i){ document.getElementById('deckTab' + i).className = 'btn small deck-tab' + (i === side ? ' active' : ''); });
+    var pool = document.getElementById('poolList');
+    pool.innerHTML = '';
+    Object.keys(CARD_DEFS).forEach(function(key){ pool.appendChild(cardRow(key, true)); });
+
+    var recipe = recipes[side], total = deckTotal(recipe);
+    var summary = document.getElementById('deckSummary');
+    summary.textContent = total + ' cards' + (total < INITIAL_HAND ? ' · needs at least ' + INITIAL_HAND + ' for the opening hand' : '');
+    summary.className = 'deck-summary mono' + (total < INITIAL_HAND ? ' warn' : '');
+    var list = document.getElementById('deckList');
+    list.innerHTML = '';
+    var keys = Object.keys(CARD_DEFS).filter(function(k){ return recipe[k] > 0; });
+    if (!keys.length) list.appendChild(el('div', 'empty-msg', {})).textContent = 'Your deck is empty — add cards from the pool.';
+    keys.forEach(function(key){ list.appendChild(cardRow(key, false)); });
+  }
+
+  document.getElementById('deckTab0').addEventListener('click', function(){ side = 0; render(); });
+  document.getElementById('deckTab1').addEventListener('click', function(){ side = 1; render(); });
+  document.getElementById('deckCopy').addEventListener('click', function(){ recipes[side] = JSON.parse(JSON.stringify(recipes[1 - side])); render(); });
+  document.getElementById('deckDefault').addEventListener('click', function(){ recipes[side] = defaultRecipe(); render(); });
+  document.getElementById('deckClear').addEventListener('click', function(){ recipes[side] = emptyRecipe(); render(); });
+  document.getElementById('deckApply').addEventListener('click', function(){
+    if (recipes.some(function(r){ return deckTotal(r) < INITIAL_HAND; })){
+      alert('Each deck needs at least ' + INITIAL_HAND + ' cards for the opening hand.');
+      return;
+    }
+    saveDeckRecipes(recipes);
+    window.location.href = 'index.html';
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
