@@ -6,6 +6,17 @@
 //   ap     ability power — Medic heals for this
 //   armor  reduces physical damage, mr (magic resist) reduces magic damage: taken = dmg × 100 / (100 + resist)
 //   as     attack speed — actions per second, one second being TICKS_PER_SECOND ticks (0 = never acts)
+// Roles: attackers deal their AD as physical damage, mages their AP as magic damage, healers heal for their AP,
+// tanks and supports never act — they matter through their passives.
+// Optional ability flags, read by the battle engine:
+//   targetsBack   attacks the right-most enemy instead of the left-most, slipping past Bodyguard (taunt still wins)
+//   armorPen      fraction of the target's armor ignored
+//   lifesteal     heals itself for this fraction of the damage it deals
+//   hitsAll       its attack hits every enemy unit
+//   adjAttackSpeed  adjacent allies gain this much attack speed (0.5 = +50%)
+//   adjResist     adjacent allies gain this much armor and MR
+//   revives       the first time it would die each round, it comes back at half HP instead
+//   staysOnTop    if it survives the round, it stays on top of your deck instead of being discarded
 var TICKS_PER_SECOND = 10;
 
 var CARD_DEFS = {
@@ -18,7 +29,28 @@ var CARD_DEFS = {
   bodyguard: { key:'bodyguard', name:'Bodyguard', icon:'⛨', role:'tank',     hp:22, ad:0,  ap:0,  armor:50, mr:20, as:0,
     effect:'Every enemy attack aimed at another of your units hits Bodyguard instead, for as long as it lives.' },
   bulwark:   { key:'bulwark',   name:'Bulwark',   icon:'⛊', role:'tank',     hp:16, ad:0,  ap:0,  armor:40, mr:40, as:0,
-    effect:'If Bulwark is your only unit when the battle begins, it doubles its HP and taunts — every enemy attack must target it.' }
+    effect:'If Bulwark is your only unit when the battle begins, it doubles its HP and taunts — every enemy attack must target it.' },
+
+  arcanist:    { key:'arcanist',    name:'Arcanist',    icon:'✦', role:'mage',     hp:14, ad:0,  ap:12, armor:10, mr:20, as:0.5,
+    effect:'Blasts the enemy front line for its AP as magic damage — armor does nothing against it, only MR.' },
+  stormcaller: { key:'stormcaller', name:'Stormcaller', icon:'☈', role:'mage',     hp:16, ad:0,  ap:6,  armor:10, mr:25, as:0.33, hitsAll:true,
+    effect:'Slow caster. Each cast hits every enemy unit for its AP as magic damage.' },
+  shade:       { key:'shade',       name:'Shade',       icon:'☾', role:'attacker', hp:14, ad:12, ap:0,  armor:15, mr:15, as:0.5, targetsBack:true,
+    effect:'Assassin. Attacks the enemy back line (right-most unit) and slips past Bodyguard. A taunt still pulls it.' },
+  duelist:     { key:'duelist',     name:'Duelist',     icon:'⚚', role:'attacker', hp:16, ad:4,  ap:0,  armor:15, mr:10, as:1,
+    effect:'Attacks twice as often as anyone else, for small hits — shreds fragile units, bounces off heavy armor.' },
+  marksman:    { key:'marksman',    name:'Marksman',    icon:'➶', role:'attacker', hp:12, ad:20, ap:0,  armor:10, mr:10, as:0.35, armorPen:0.5,
+    effect:"Slow, heavy shots that ignore half the target's armor. Built to crack tanks." },
+  leech:       { key:'leech',       name:'Leech',       icon:'❦', role:'attacker', hp:18, ad:8,  ap:0,  armor:15, mr:15, as:0.5, lifesteal:0.5,
+    effect:'Heals itself for half the damage it deals.' },
+  phoenix:     { key:'phoenix',     name:'Phoenix',     icon:'♨', role:'attacker', hp:14, ad:8,  ap:0,  armor:10, mr:10, as:0.5, revives:true,
+    effect:'The first time it would die each round, it bursts back to life at half HP.' },
+  veteran:     { key:'veteran',     name:'Veteran',     icon:'✪', role:'attacker', hp:20, ad:9,  ap:0,  armor:20, mr:15, as:0.5, staysOnTop:true,
+    effect:'If Veteran survives the round, it stays on top of your deck for the next round instead of being discarded.' },
+  drummer:     { key:'drummer',     name:'War Drummer', icon:'♫', role:'support',  hp:16, ad:0,  ap:0,  armor:15, mr:15, as:0, adjAttackSpeed:0.5,
+    effect:'Never attacks. Units next to it attack 50% faster. Best in the middle slot.' },
+  warden:      { key:'warden',      name:'Warden',      icon:'⛉', role:'support',  hp:20, ad:0,  ap:0,  armor:30, mr:30, as:0, adjResist:20,
+    effect:'Never attacks. Units next to it gain +20 armor and +20 MR. Best in the middle slot.' }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).
 Object.keys(CARD_DEFS).forEach(function(k){
@@ -26,9 +58,10 @@ Object.keys(CARD_DEFS).forEach(function(k){
   c.cooldown = c.as > 0 ? Math.round(TICKS_PER_SECOND / c.as) : Infinity;
 });
 
-var DEFAULT_RECIPE = { striker:4, medic:4, predator:4, bodyguard:4, bulwark:4 };
+var DEFAULT_RECIPE = { striker:2, medic:2, predator:2, bodyguard:1, bulwark:1, arcanist:2, stormcaller:1, shade:2, duelist:2,
+                       marksman:1, leech:1, phoenix:1, veteran:1, drummer:1, warden:1 };
 var MAX_COPIES = 6;
-var INITIAL_HAND = 5;
+var ROUND_PICKS = 3;   // each round you field units from the top 3 cards of your deck
 var DECK_STORAGE_KEY = 'fd7-deck-recipes';
 
 function el(tag, cls, attrs){
@@ -39,7 +72,7 @@ function el(tag, cls, attrs){
 }
 
 function roleLabel(card){
-  return { attacker:'Attacker', healer:'Healer', tank:'Tank' }[card.role];
+  return { attacker:'Attacker', mage:'Mage', healer:'Healer', tank:'Tank', support:'Support' }[card.role];
 }
 
 // ['HP 20', 'AD 10', 'AP 0', 'ARM 20', 'MR 10', 'AS 0.50']

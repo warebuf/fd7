@@ -22,9 +22,32 @@
   .panel-title{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.95rem; color:var(--side); flex:1 1 auto; }
   .row-label{ font-size:.6rem; text-transform:uppercase; letter-spacing:.07em; color:var(--text-dim); margin-bottom:4px; }
   .row{ display:flex; flex-wrap:wrap; gap:8px; }
-  .hand-section{ flex:1 1 auto; min-height:0; overflow-y:auto; }
+  .deck-section{ flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
+  .deck-list{ display:flex; flex-direction:column; gap:3px; }
+  /* deck rows are a small table: position, icon, name, then one aligned column per stat */
+  .deck-row, .deck-cols{
+    display:grid; grid-template-columns:18px 18px minmax(0,1fr) repeat(6, 32px); align-items:center; column-gap:4px;
+    padding:3px 8px; font-size:.74rem;
+  }
+  .deck-row{ border-radius:6px; background:var(--panel-2); border-left:3px solid var(--role); cursor:pointer; }
+  .deck-cols{ padding-top:0; padding-bottom:2px; border-left:3px solid transparent; font-size:.58rem; letter-spacing:.05em; color:var(--text-dim); }
+  .deck-cols span, .deck-row .num{ text-align:right; }
+  .deck-row .nm{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .deck-row .nm small{ color:var(--side); font-size:.6rem; font-weight:600; margin-left:5px; letter-spacing:.04em; }
+  .deck-row .num{ font-size:.68rem; }
+  .deck-row .num.zero{ color:var(--text-dim); opacity:.5; }
+  .deck-row .num.key{ color:var(--role); font-weight:600; }
+  .deck-row.r-attacker{ --role:var(--danger); }
+  .deck-row.r-healer{ --role:var(--heal); }
+  .deck-row.r-tank{ --role:var(--tank); }
+  .deck-row.r-mage{ --role:var(--magic); }
+  .deck-row.r-support{ --role:var(--support); }
+  .deck-row .pos{ color:var(--text-dim); font-size:.66rem; }
+  .deck-row.selected{ background:var(--side-bg); outline:2px solid var(--side); outline-offset:-1px; }
+  .deck-row.placed{ opacity:.45; cursor:default; }
+  .deck-row.discarded{ opacity:.55; }
 
-  /* card tiles, used for board units, empty slots and hand cards */
+  /* card tiles, used for board units and empty slots */
   .tile{
     position:relative; width:92px; min-height:118px; border-radius:10px; border:1px solid var(--line);
     background:var(--panel-2); padding:7px 6px 6px; display:flex; flex-direction:column; align-items:center; gap:3px;
@@ -33,6 +56,13 @@
   .tile.r-attacker{ --role:var(--danger); }
   .tile.r-healer{ --role:var(--heal); }
   .tile.r-tank{ --role:var(--tank); }
+  .tile.r-mage{ --role:var(--magic); }
+  .tile.r-support{ --role:var(--support); }
+  .prio{
+    position:absolute; top:3px; left:4px; font-size:.58rem; font-weight:600; color:var(--text-dim);
+    border:1px solid var(--line); border-radius:999px; min-width:15px; padding:0 3px; text-align:center; background:var(--panel);
+  }
+  .line.buff{ color:var(--support); }
   .tile .icon{ font-size:1.4rem; line-height:1.1; }
   .tile .name{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.76rem; text-align:center; line-height:1.1; }
   .tile .line{ font-size:.64rem; color:var(--text-dim); }
@@ -50,7 +80,7 @@
   .bar.hp.low > div{ background:var(--danger); }
   .bar.cd > div{ background:var(--side); opacity:.6; }
   .slot-empty{
-    width:92px; min-height:118px; border-radius:10px; border:1px dashed var(--line); color:var(--text-dim);
+    position:relative; width:92px; min-height:118px; border-radius:10px; border:1px dashed var(--line); color:var(--text-dim);
     display:flex; align-items:center; justify-content:center; font-size:1.3rem;
   }
   .slot-empty.valid{ border-color:var(--side); color:var(--side); background:var(--side-bg); cursor:pointer; }
@@ -112,7 +142,7 @@
 <script src="shared.js"></script>
 <script>
 (function(){
-  var UNIT_SLOTS = 3, SIM_TICKS = 60, DRAW_PER_ROUND = 3;
+  var UNIT_SLOTS = 3, SIM_TICKS = 60;
   var PREDATOR_DEATH_AOE = 5;
   var state;
   var cardUid = 0;
@@ -137,18 +167,19 @@
     return shuffle(deck);
   }
   function newPlayer(name, recipe){
-    return { name: name, deck: buildDeck(recipe), hand: [], grave: [], units: new Array(UNIT_SLOTS).fill(null) };
+    // deck[0] is the top card. The deck is only shuffled once, at the start of the game.
+    return { name: name, deck: buildDeck(recipe), discard: [], units: new Array(UNIT_SLOTS).fill(null) };
   }
   function newGame(){
     var recipes = loadDeckRecipes();
     state = {
       round: 1, phase: 'setup', tick: 0, roundWins: [0, 0], log: [], queue: [],
-      selected: null,   // { side, idx } of the hand card being placed
+      selected: null,   // { side, pos } of the pick (a top-of-deck card) being placed
       inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
       players: [newPlayer('Player 1', recipes[0]), newPlayer('Player 2', recipes[1])]
     };
-    state.players.forEach(function(p){ drawCards(p, INITIAL_HAND); });
-    addLog('Round 1: place up to ' + UNIT_SLOTS + ' units each, then start the battle.', 'meta');
+    addLog('Round 1: each player fields units from the top ' + ROUND_PICKS + ' cards of their deck, then start the battle.', 'meta');
+    logTurnOrder();
     render();
   }
 
@@ -157,48 +188,41 @@
     if (state.log.length > 300) state.log.shift();
   }
 
-  // An empty deck is refilled from the graveyard, so play can go on forever.
-  function drawCards(p, n){
-    for (var i = 0; i < n; i++){
-      if (!p.deck.length){
-        if (!p.grave.length) return;
-        p.deck = shuffle(p.grave);
-        p.grave = [];
-        addLog(p.name + ' shuffles their graveyard back into the deck.', 'meta');
-      }
-      p.hand.push(p.deck.pop());
-    }
-  }
+  // ---------- Setup phase: fielding this round's picks ----------
+  // Each round the top ROUND_PICKS cards of the deck are the only cards you can field.
+  function pickCount(p){ return Math.min(ROUND_PICKS, p.deck.length); }
+  function isOnBoard(p, card){ return p.units.some(function(u){ return u && u.card === card; }); }
 
-  // ---------- Setup phase: placing units ----------
-  function onHandClick(side, idx){
-    state.inspected = { card: state.players[side].hand[idx], side: side };
-    if (state.phase === 'setup'){
+  function onPickClick(side, pos){
+    var p = state.players[side], card = p.deck[pos];
+    state.inspected = { card: card, side: side };
+    if (state.phase === 'setup' && pos < pickCount(p) && !isOnBoard(p, card)){
       var sel = state.selected;
-      state.selected = (sel && sel.side === side && sel.idx === idx) ? null : { side: side, idx: idx };
+      state.selected = (sel && sel.side === side && sel.pos === pos) ? null : { side: side, pos: pos };
     }
     render();
   }
-  function onHandDoubleClick(side, idx){
-    if (state.phase !== 'setup') return;
-    var slot = state.players[side].units.indexOf(null);
-    if (slot !== -1) placeUnit(side, idx, slot);
+  function onPickDoubleClick(side, pos){
+    var p = state.players[side];
+    if (state.phase !== 'setup' || pos >= pickCount(p) || isOnBoard(p, p.deck[pos])) return;
+    var slot = p.units.indexOf(null);
+    if (slot !== -1) placeUnit(side, pos, slot);
   }
   function onSlotClick(side, slot){
     var p = state.players[side];
     var u = p.units[slot];
     if (u){
       state.inspected = { card: u.card, side: side, slot: slot };
-      // during setup, clicking a placed unit returns it to hand
-      if (state.phase === 'setup'){ p.hand.push(u.card); p.units[slot] = null; state.selected = null; }
+      // during setup, clicking a placed unit takes it back off the board
+      if (state.phase === 'setup'){ p.units[slot] = null; state.selected = null; }
       render();
       return;
     }
-    if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.idx, slot);
+    if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.pos, slot);
   }
-  function placeUnit(side, handIdx, slot){
+  function placeUnit(side, pos, slot){
     var p = state.players[side];
-    var card = p.hand.splice(handIdx, 1)[0];
+    var card = p.deck[pos];
     p.units[slot] = { card: card, hp: card.hp, maxHp: card.hp, taunting: false };
     state.selected = null;
     state.inspected = { card: card, side: side, slot: slot };
@@ -224,22 +248,51 @@
     if (!checkForWipe()) render();   // a side that fielded no units loses on the spot
   }
 
-  // The side that acts first on tied ticks alternates each round; within a tick, slots go left to right,
-  // alternating sides: first side's slot 1, other side's slot 1, first side's slot 2, ...
-  function firstSide(){ return (state.round - 1) % 2; }
-  function actorsAt(t){
-    var order = [], f = firstSide();
-    for (var slot = 0; slot < UNIT_SLOTS; slot++){
-      [f, 1 - f].forEach(function(side){
-        var u = state.players[side].units[slot];
-        if (u && isFinite(u.card.cooldown) && t % u.card.cooldown === 0) order.push({ side: side, slot: slot, tick: t });
-      });
-    }
-    return order;
+  // Turn order: the six board slots are numbered 1–6 and lower numbers act first when units act on the same
+  // tick. One side's slots are 1, 3, 5 (left to right), the other's 2, 4, 6, and the sides swap every round.
+  function oddSide(){ return (state.round - 1) % 2; }
+  function priority(side, slot){ return 2 * slot + (side === oddSide() ? 1 : 2); }
+  function logTurnOrder(){
+    addLog('Turn order: ' + state.players[oddSide()].name + ' has slots 1·3·5, ' + state.players[1 - oddSide()].name + ' has 2·4·6.', 'meta');
   }
+  function actorsAt(t){
+    var order = [];
+    [0, 1].forEach(function(side){
+      state.players[side].units.forEach(function(u, slot){
+        var cd = u ? cooldownOf(side, slot) : Infinity;
+        if (isFinite(cd) && t % cd === 0) order.push({ side: side, slot: slot, tick: t, prio: priority(side, slot) });
+      });
+    });
+    return order.sort(function(a, b){ return a.prio - b.prio; });
+  }
+
+  // ---------- Effective stats (base stats plus neighbours' auras) ----------
+  function neighbours(side, slot){
+    var units = state.players[side].units;
+    return [units[slot - 1], units[slot + 1]].filter(Boolean);
+  }
+  function resistBonus(side, slot){
+    return neighbours(side, slot).reduce(function(a, n){ return a + (n.card.adjResist || 0); }, 0);
+  }
+  function armorOf(side, slot){ return state.players[side].units[slot].card.armor + resistBonus(side, slot); }
+  function mrOf(side, slot){ return state.players[side].units[slot].card.mr + resistBonus(side, slot); }
+  function attackSpeedOf(side, slot){
+    var u = state.players[side].units[slot];
+    var bonus = neighbours(side, slot).reduce(function(a, n){ return a + (n.card.adjAttackSpeed || 0); }, 0);
+    return u.card.as * (1 + bonus);
+  }
+  function cooldownOf(side, slot){
+    var as = attackSpeedOf(side, slot);
+    return as > 0 ? Math.round(TICKS_PER_SECOND / as) : Infinity;
+  }
+
   function peekNextAction(){
     if (state.phase !== 'battle') return null;
-    if (state.queue.length) return state.queue[0];
+    // queued actors killed earlier this tick have left their slot empty and will be skipped
+    for (var i = 0; i < state.queue.length; i++){
+      var a = state.queue[i];
+      if (state.players[a.side].units[a.slot]) return a;
+    }
     for (var t = state.tick + 1; t <= SIM_TICKS; t++){
       var q = actorsAt(t);
       if (q.length) return q[0];
@@ -266,53 +319,78 @@
   }
 
   function act(side, slot, u){
-    if (u.card.role === 'attacker') attack(side, u);
+    if (u.card.role === 'attacker' || u.card.role === 'mage') attack(side, slot, u);
     else if (u.card.role === 'healer') heal(side, u);
   }
 
-  // Taunt beats everything; otherwise attacks go at the left-most unit, unless a Bodyguard steps in.
-  function pickTarget(dp){
-    var taunt = -1, first = -1, guard = -1;
+  // Taunt beats everything. Otherwise attacks go at the left-most unit, unless a Bodyguard steps in —
+  // back-line attackers (Shade) go for the right-most unit instead and slip past Bodyguard.
+  function pickTarget(dp, targetsBack){
+    var taunt = -1, first = -1, last = -1, guard = -1;
     dp.units.forEach(function(u, i){
       if (!u) return;
       if (u.taunting && taunt === -1) taunt = i;
       if (first === -1) first = i;
+      last = i;
       if (u.card.key === 'bodyguard' && guard === -1) guard = i;
     });
     if (taunt !== -1) return { slot: taunt };
+    if (first === -1) return null;
+    if (targetsBack) return { slot: last };
     if (guard !== -1 && guard !== first) return { slot: guard, shielded: first };
-    return first === -1 ? null : { slot: first };
+    return { slot: first };
   }
 
-  function attack(side, u){
+  function attack(side, slot, u){
     var dSide = 1 - side, dp = state.players[dSide];
-    var target = pickTarget(dp);
+    var label = state.players[side].name + "'s " + u.card.name;
+    var magic = u.card.role === 'mage';
+    var amount = magic ? u.card.ap : u.card.ad;
+    var type = magic ? 'magic' : 'physical';
+    if (u.card.hitsAll){
+      addLog('t' + state.tick + ': ' + label + ' calls down a storm on every enemy unit.', 'attack');
+      dp.units.slice().forEach(function(target, i){ if (target && dp.units[i] === target) dealDamage(dSide, i, amount, type, label); });
+      return;
+    }
+    var target = pickTarget(dp, u.card.targetsBack);
     if (!target) return;
     if (target.shielded !== undefined) addLog('t' + state.tick + ': ' + dp.name + "'s Bodyguard steps in front of " + dp.units[target.shielded].card.name + '.', 'meta');
-    dealDamage(dSide, target.slot, u.card.ad, 'physical', state.players[side].name + "'s " + u.card.name);
+    var dealt = dealDamage(dSide, target.slot, amount, type, label, u.card.armorPen || 0);
+    if (u.card.lifesteal && state.players[side].units[slot] === u && u.hp < u.maxHp){
+      var before = u.hp;
+      u.hp = Math.min(u.maxHp, u.hp + Math.round(dealt * u.card.lifesteal));
+      if (u.hp > before) addLog('t' + state.tick + ': ' + label + ' drains ' + (u.hp - before) + ' HP.', 'heal');
+    }
   }
 
   // Physical damage is reduced by armor, magic by MR, true damage by nothing:
-  // taken = dmg × 100 / (100 + resist), rounded, at least 1.
-  function mitigated(amount, type, u){
+  // taken = dmg × 100 / (100 + resist), rounded, at least 1. armorPen ignores that fraction of armor.
+  function mitigated(amount, type, side, slot, armorPen){
     if (amount <= 0) return 0;
-    var resist = type === 'physical' ? u.card.armor : type === 'magic' ? u.card.mr : 0;
+    var resist = type === 'physical' ? armorOf(side, slot) * (1 - (armorPen || 0)) : type === 'magic' ? mrOf(side, slot) : 0;
     return Math.max(1, Math.round(amount * 100 / (100 + resist)));
   }
-  function dealDamage(side, slot, amount, type, label){
+  // Returns the damage actually dealt.
+  function dealDamage(side, slot, amount, type, label, armorPen){
     var p = state.players[side], u = p.units[slot];
-    var dealt = mitigated(amount, type, u);
+    var dealt = mitigated(amount, type, side, slot, armorPen);
     u.hp -= dealt;
     var note = dealt === amount ? '' : ' (' + amount + ' ' + type + ', ' + (type === 'physical' ? 'armor' : 'MR') + ' blocked ' + (amount - dealt) + ')';
     addLog('t' + state.tick + ': ' + label + ' hits ' + p.name + "'s " + u.card.name + ' for ' + dealt + note + '.', 'attack');
     if (u.hp <= 0) killUnit(side, slot);
+    return dealt;
   }
 
   function killUnit(side, slot){
     var p = state.players[side], u = p.units[slot];
     if (!u) return;
+    if (u.card.revives && !u.revived){
+      u.revived = true;
+      u.hp = Math.ceil(u.maxHp / 2);
+      addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' bursts back to life with ' + u.hp + ' HP!', 'heal');
+      return;
+    }
     p.units[slot] = null;
-    p.grave.push(u.card);
     addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' is destroyed.', 'destroy');
     if (u.card.key === 'predator'){
       p.units.forEach(function(other, i){
@@ -355,19 +433,34 @@
     state.phase = 'roundEnd';
     render();
   }
-  // Every round is a fresh fight: survivors go to the graveyard, then each player draws.
+  // Every round is a fresh fight: the board clears and this round's picks — played or not, alive or dead —
+  // go to the discard pile, so the next cards down become the new top. A surviving card with staysOnTop
+  // (Veteran) stays on top for the next round instead. When fewer than ROUND_PICKS cards are left, the
+  // discard pile is shuffled and slid under them, so there are always a full set of picks.
   function nextRound(){
     if (state.phase !== 'roundEnd') return;
     state.players.forEach(function(p){
-      p.units.forEach(function(u){ if (u) p.grave.push(u.card); });
+      var survivors = p.units.filter(function(u){ return u && u.card.staysOnTop; }).map(function(u){ return u.card; });
+      var n = pickCount(p);
+      var picks = p.deck.slice(0, n);
+      var stay = picks.filter(function(c){ return survivors.indexOf(c) !== -1; });
+      var go = picks.filter(function(c){ return stay.indexOf(c) === -1; });
+      p.deck = stay.concat(p.deck.slice(n));
+      p.discard = p.discard.concat(go);
+      stay.forEach(function(c){ addLog(p.name + "'s " + c.name + ' survived — it stays on top of the deck.', 'meta'); });
+      if (p.deck.length < ROUND_PICKS && p.discard.length){
+        p.deck = p.deck.concat(shuffle(p.discard));
+        p.discard = [];
+        addLog(p.name + ' is running low — the discard pile is shuffled back in under the deck.', 'meta');
+      }
       p.units = new Array(UNIT_SLOTS).fill(null);
     });
     state.round++;
     state.tick = 0;
     state.phase = 'setup';
     state.inspected = null;
-    addLog('Round ' + state.round + ': the board is cleared and each player draws ' + DRAW_PER_ROUND + '.', 'meta');
-    state.players.forEach(function(p){ drawCards(p, DRAW_PER_ROUND); });
+    addLog('Round ' + state.round + ': the board clears and last round\'s picks go to each discard pile.', 'meta');
+    logTurnOrder();
     render();
   }
 
@@ -377,8 +470,14 @@
   function roleLine(card, u){
     if (u && u.taunting) return '<div class="line hot">TAUNT</div>';
     if (card.role === 'attacker') return '<div class="line hot mono">AD ' + card.ad + '</div>';
-    if (card.role === 'healer') return '<div class="line hot mono">AP ' + card.ap + '</div>';
+    if (card.role === 'healer' || card.role === 'mage') return '<div class="line hot mono">AP ' + card.ap + '</div>';
+    if (card.role === 'support') return '<div class="line hot">AURA</div>';
     return '<div class="line hot mono">ARM ' + card.armor + '</div>';
+  }
+
+  function prioBadge(side, slot){
+    var n = priority(side, slot);
+    return '<div class="prio mono" title="Turn order ' + n + ' — lower acts first on the same tick">' + n + '</div>';
   }
 
   function renderUnit(side, slot, next){
@@ -386,38 +485,68 @@
     if (!u){
       var valid = state.phase === 'setup' && state.selected && state.selected.side === side;
       var empty = el('div', 'slot-empty' + (valid ? ' valid' : ''), valid ? { tabindex: '0', role: 'button', 'aria-label': 'Place here' } : {});
-      empty.textContent = '+';
+      empty.innerHTML = prioBadge(side, slot) + '+';
       empty.addEventListener('click', function(){ onSlotClick(side, slot); });
       return empty;
     }
     var card = u.card;
     var isNext = !!(next && next.side === side && next.slot === slot);
     var hpPct = Math.max(0, u.hp / u.maxHp);
-    var cdPct = state.phase === 'battle' && isFinite(card.cooldown) ? (state.tick % card.cooldown) / card.cooldown : 0;
+    var cd = cooldownOf(side, slot);
+    var cdPct = state.phase === 'battle' && isFinite(cd) ? (state.tick % cd) / cd : 0;
+    var arm = armorOf(side, slot), mr = mrOf(side, slot);
+    var buffed = arm !== card.armor || cd !== card.cooldown;
     var tile = el('div', 'tile r-' + card.role + (isNext ? ' next' : ''), {
-      tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to return to hand' : '')
+      tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to take it off the board' : '')
     });
-    tile.innerHTML = (isNext ? '<div class="next-tag">NEXT</div>' : '') +
+    tile.innerHTML = prioBadge(side, slot) + (isNext ? '<div class="next-tag">NEXT</div>' : '') +
       '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u) +
-      '<div class="line mono">' + u.hp + '/' + u.maxHp + '</div>' +
+      '<div class="line mono' + (buffed ? ' buff' : '') + '" title="Armor and magic resist, including buffs from neighbours">ARM ' + arm + ' · MR ' + mr + '</div>' +
+      '<div class="line mono">' + u.hp + '/' + u.maxHp + ' HP</div>' +
       '<div class="bar hp' + (hpPct < .34 ? ' low' : '') + '"><div style="width:' + (hpPct * 100) + '%"></div></div>' +
       '<div class="bar cd"><div style="width:' + (cdPct * 100) + '%"></div></div>';
     tile.addEventListener('click', function(){ onSlotClick(side, slot); });
     return tile;
   }
 
-  function renderHandCard(side, idx){
-    var card = state.players[side].hand[idx];
-    var sel = state.selected && state.selected.side === side && state.selected.idx === idx;
-    var tile = el('div', 'tile r-' + card.role + (sel ? ' selected' : ''), {
-      tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to select, double-click to place' : '')
+  var STAT_COLS = ['HP', 'AD', 'AP', 'ARM', 'MR', 'AS'];
+  // The stat each role cares about most is highlighted: damage for attackers, heal power for healers, armor for tanks.
+  var KEY_STAT = { attacker: 'AD', mage: 'AP', healer: 'AP', tank: 'ARM' };
+  function statCells(card){
+    var vals = { HP: card.hp, AD: card.ad, AP: card.ap, ARM: card.armor, MR: card.mr, AS: card.as };
+    return STAT_COLS.map(function(k){
+      var v = vals[k];
+      var text = k === 'AS' ? (v > 0 ? v.toFixed(2) : '—') : v;
+      var cls = 'num mono' + (!v ? ' zero' : '') + (KEY_STAT[card.role] === k ? ' key' : '');
+      return '<span class="' + cls + '">' + text + '</span>';
+    }).join('');
+  }
+  function statHeader(){
+    var head = el('div', 'deck-cols mono', { 'aria-hidden': 'true' });
+    head.innerHTML = '<span></span><span></span><span></span>' + STAT_COLS.map(function(k){ return '<span>' + k + '</span>'; }).join('');
+    return head;
+  }
+
+  // Every deck card is a numbered row. The top ROUND_PICKS rows are this round's picks: selectable in setup,
+  // faded once they are on the board.
+  function renderDeckRow(side, pos){
+    var p = state.players[side], card = p.deck[pos];
+    var isPick = pos < pickCount(p);
+    var placed = isPick && isOnBoard(p, card);
+    var sel = isPick && state.selected && state.selected.side === side && state.selected.pos === pos;
+    var row = el('div', 'deck-row r-' + card.role + (sel ? ' selected' : '') + (placed ? ' placed' : ''), {
+      tabindex: '0', role: 'button',
+      title: card.name + ' — position ' + (pos + 1) + ' from the top' +
+        (placed ? ' (on the board)' : isPick && state.phase === 'setup' ? ' — click to select, double-click to place' : '')
     });
-    tile.innerHTML = '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card) +
-      '<div class="line mono">HP ' + card.hp + '</div>';
-    tile.addEventListener('click', function(){ onHandClick(side, idx); });
-    tile.addEventListener('dblclick', function(){ onHandDoubleClick(side, idx); });
-    tile.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); onHandClick(side, idx); } });
-    return tile;
+    row.innerHTML = '<span class="pos mono">' + (pos + 1) + '</span><span>' + card.icon + '</span>' +
+      '<span class="nm">' + card.name + (placed ? '<small>ON BOARD</small>' : '') + '</span>' + statCells(card);
+    row.addEventListener('click', function(){ onPickClick(side, pos); });
+    if (isPick){
+      row.addEventListener('dblclick', function(){ onPickDoubleClick(side, pos); });
+      row.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); onPickClick(side, pos); } });
+    }
+    return row;
   }
 
   function renderPanel(side, next){
@@ -425,17 +554,40 @@
     var panel = document.getElementById('panel-' + side);
     panel.innerHTML =
       '<div class="panel-head"><div class="panel-title">' + p.name + '</div>' +
-      '<span class="pill mono" title="Cards left in deck">Deck ' + p.deck.length + '</span>' +
-      '<span class="pill mono" title="Cards in graveyard">Grave ' + p.grave.length + '</span></div>';
+      '<span class="pill mono" title="Cards in deck">Deck ' + p.deck.length + '</span>' +
+      '<span class="pill mono" title="Cards in the discard pile">Discard ' + p.discard.length + '</span></div>';
     var unitsSec = panel.appendChild(el('div', '', {}));
     unitsSec.appendChild(el('div', 'row-label', {})).textContent = 'Units';
     var unitsRow = unitsSec.appendChild(el('div', 'row', {}));
     for (var slot = 0; slot < UNIT_SLOTS; slot++) unitsRow.appendChild(renderUnit(side, slot, next));
-    var handSec = panel.appendChild(el('div', 'hand-section', {}));
-    handSec.appendChild(el('div', 'row-label', {})).textContent = 'Hand (' + p.hand.length + ')';
-    var handRow = handSec.appendChild(el('div', 'row', {}));
-    if (!p.hand.length) handRow.appendChild(el('div', 'empty-note', {})).textContent = 'No cards in hand.';
-    p.hand.forEach(function(_, i){ handRow.appendChild(renderHandCard(side, i)); });
+
+    var deckSec = panel.appendChild(el('div', 'deck-section', {}));
+    var n = pickCount(p);
+    var picksWrap = deckSec.appendChild(el('div', '', {}));
+    picksWrap.appendChild(el('div', 'row-label', {})).textContent = 'This round — top ' + n + ' of your deck';
+    var picks = picksWrap.appendChild(el('div', 'deck-list', {}));
+    if (n) picks.appendChild(statHeader());
+    if (!n) picks.appendChild(el('div', 'empty-note', {})).textContent = 'Your deck is empty.';
+    for (var i = 0; i < n; i++) picks.appendChild(renderDeckRow(side, i));
+    if (p.deck.length > n){
+      var restWrap = deckSec.appendChild(el('div', '', {}));
+      restWrap.appendChild(el('div', 'row-label', {})).textContent = 'Then, in order';
+      var list = restWrap.appendChild(el('div', 'deck-list', {}));
+      for (var j = n; j < p.deck.length; j++) list.appendChild(renderDeckRow(side, j));
+    }
+    if (p.discard.length){
+      var discWrap = deckSec.appendChild(el('div', '', {}));
+      discWrap.appendChild(el('div', 'row-label', {})).textContent = 'Discard pile — most recent first';
+      var dlist = discWrap.appendChild(el('div', 'deck-list', {}));
+      p.discard.slice().reverse().forEach(function(card){ dlist.appendChild(renderDiscardRow(side, card)); });
+    }
+  }
+
+  function renderDiscardRow(side, card){
+    var row = el('div', 'deck-row discarded r-' + card.role, { tabindex: '0', role: 'button', title: card.name + ' — in the discard pile' });
+    row.innerHTML = '<span class="pos mono">–</span><span>' + card.icon + '</span><span class="nm">' + card.name + '</span>' + statCells(card);
+    row.addEventListener('click', function(){ state.inspected = { card: card, side: side }; render(); });
+    return row;
   }
 
   function renderInspector(){
@@ -451,9 +603,12 @@
     var html = cardInfoHtml(ins.card);
     var u = ins.slot != null ? state.players[ins.side].units[ins.slot] : null;
     if (u && u.card === ins.card){
-      var live = ['On ' + state.players[ins.side].name + "'s board", 'HP ' + u.hp + '/' + u.maxHp];
+      var live = ['On ' + state.players[ins.side].name + "'s board", 'Turn order ' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,
+                  'ARM ' + armorOf(ins.side, ins.slot) + ' · MR ' + mrOf(ins.side, ins.slot)];
       if (u.taunting) live.push('Taunting');
-      if (isFinite(u.card.cooldown)) live.push('Acts every ' + u.card.cooldown + ' ticks');
+      if (u.revived) live.push('Already revived this round');
+      var icd = cooldownOf(ins.side, ins.slot);
+      if (isFinite(icd)) live.push('Acts every ' + icd + ' ticks' + (icd !== u.card.cooldown ? ' (sped up)' : ''));
       html += '<div class="inspector-live">' + live.join(' · ') + '</div>';
     }
     body.innerHTML = html;

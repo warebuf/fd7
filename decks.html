@@ -30,6 +30,8 @@
   .row-card.r-attacker{ --role:var(--danger); }
   .row-card.r-healer{ --role:var(--heal); }
   .row-card.r-tank{ --role:var(--tank); }
+  .row-card.r-mage{ --role:var(--magic); }
+  .row-card.r-support{ --role:var(--support); }
   .row-card .icon{ width:24px; text-align:center; font-size:1.1rem; }
   .row-card .info{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:3px; }
   .row-card .name{ font-weight:600; font-size:.82rem; }
@@ -135,8 +137,8 @@
 
     var recipe = recipes[side], total = deckTotal(recipe);
     var summary = document.getElementById('deckSummary');
-    summary.textContent = total + ' cards' + (total < INITIAL_HAND ? ' · needs at least ' + INITIAL_HAND + ' for the opening hand' : '');
-    summary.className = 'deck-summary mono' + (total < INITIAL_HAND ? ' warn' : '');
+    summary.textContent = total + ' cards' + (total < ROUND_PICKS ? ' · needs at least ' + ROUND_PICKS + ' to fill a round' : '');
+    summary.className = 'deck-summary mono' + (total < ROUND_PICKS ? ' warn' : '');
     var list = document.getElementById('deckList');
     list.innerHTML = '';
     var keys = Object.keys(CARD_DEFS).filter(function(k){ return recipe[k] > 0; });
@@ -150,8 +152,8 @@
   document.getElementById('deckDefault').addEventListener('click', function(){ recipes[side] = defaultRecipe(); render(); });
   document.getElementById('deckClear').addEventListener('click', function(){ recipes[side] = emptyRecipe(); render(); });
   document.getElementById('deckApply').addEventListener('click', function(){
-    if (recipes.some(function(r){ return deckTotal(r) < INITIAL_HAND; })){
-      alert('Each deck needs at least ' + INITIAL_HAND + ' cards for the opening hand.');
+    if (recipes.some(function(r){ return deckTotal(r) < ROUND_PICKS; })){
+      alert('Each deck needs at least ' + ROUND_PICKS + ' cards to fill a round.');
       return;
     }
     saveDeckRecipes(recipes);
