@@ -14,28 +14,28 @@ var CARD_DEFS = {
   striker:   { key:'striker',   name:'Striker',   icon:'⚔', role:'attacker', hp:20, ad:10, ap:0,  armor:20, mr:10, as:0.5,
     effect:'Its ability depends on its position.',
     positions:[
-      { name:'Heavy attack', short:'HEAVY', text:'Hits the enemy front line for 150% of its AD.' },
-      { name:'Buff itself',  short:'RAMP',  text:'Gains +3 AD for the rest of the round, then attacks.' },
-      { name:'Execute',      short:'EXECUTE', text:'Goes for the most damaged enemy and kills it outright at 30% HP or less; otherwise hits it for its AD.' }
+      { name:'Heavy attack', short:'HEAVY', text:'Hits a random enemy for 150% of its AD.' },
+      { name:'Buff itself',  short:'RAMP',  text:'Permanently gains +5 AD (kept for the rest of the game), then attacks.' },
+      { name:'Execute',      short:'EXECUTE', text:'Hits the most damaged enemy (lowest HP %) for its AD. If no enemy is damaged yet, hits the front line.' }
     ] },
   medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:15, ad:0,  ap:10, armor:10, mr:25, as:0.5,
     effect:'Its ability depends on its position.',
     positions:[
-      { name:'Empower', short:'EMPOWER', text:'The ally who will act next gets a 50% stronger next action.' },
-      { name:'Heal',    short:'HEAL',    text:'Heals your weakest ally (by %) for its AP.' },
-      { name:'Revive',  short:'REVIVE',  text:'Once per round, brings back an ally that died this round at half HP. Otherwise heals your weakest ally for double its AP.' }
+      { name:'AP buff', short:'+AP', text:'Gives every unit on your side +5 AP for the rest of the round. Stacks — powers up a healing Medic in position 3.' },
+      { name:'AD buff', short:'+AD', text:'Gives every unit on your side +3 AD for the rest of the round. Stacks.' },
+      { name:'Heal',    short:'HEAL',    text:'Heals your weakest ally (by HP %) for its AP. Boosted by AP buffs.' }
     ] },
   predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:18, ad:16, ap:0,  armor:15, mr:10, as:0.5,
     effect:'Its ability depends on its position.',
     positions:[
-      { name:'Mark',   short:'MARK',   text:'Marks the most dangerous unmarked enemy (highest AD or AP). Marked units take 25% more damage from everything.' },
+      { name:'Mark',   short:'MARK',   text:'Marks the most dangerous unmarked enemy (highest AD or AP). Marked units lose 10 armor and 10 MR for the rest of the round.' },
       { name:'Hunt',   short:'HUNT',   text:'Attacks a marked enemy wherever it stands. With no mark on the board, attacks the front line.' },
       { name:'Trophy', short:'TROPHY', text:'Attacks the front line. Every kill permanently gives this card +2 AD for the rest of the game.' }
     ] },
   warden:      { key:'warden',      name:'Warden',      icon:'⛉', role:'support',  hp:20, ad:6,  ap:0,  armor:30, mr:30, as:0.5,
     effect:'Its ability depends on its position.',
     positions:[
-      { name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor for the rest of the round. Stacks.' },
+      { name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor permanently (kept for the rest of the game). Stacks.' },
       { name:'Guard',   short:'GUARD',   text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
       { name:'Counter', short:'COUNTER', acts:false, text:'Never acts on its own. Whenever an enemy attack hits Warden, it strikes the attacker back for its AD.' }
     ] }
@@ -63,9 +63,9 @@ function roleLabel(card){
   return { attacker:'Attacker', healer:'Healer', support:'Support' }[card.role];
 }
 
-// ['HP 20', 'AD 10', 'AP 0', 'ARM 20', 'MR 10', 'AS 0.50']. AD includes permanent bonuses (Predator trophies).
+// ['HP 20', 'AD 10', 'AP 0', 'ARM 20', 'MR 10', 'AS 0.50']. AD and ARM include permanent bonuses earned in play.
 function statList(card){
-  return ['HP ' + card.hp, 'AD ' + (card.ad + (card.bonusAd || 0)), 'AP ' + card.ap, 'ARM ' + card.armor, 'MR ' + card.mr,
+  return ['HP ' + card.hp, 'AD ' + (card.ad + (card.bonusAd || 0)), 'AP ' + card.ap, 'ARM ' + (card.armor + (card.bonusArmor || 0)), 'MR ' + card.mr,
           'AS ' + (card.as > 0 ? card.as.toFixed(2) : '—')];
 }
 
