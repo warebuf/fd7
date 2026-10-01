@@ -6,51 +6,39 @@
 //   ap     ability power — Medic heals for this
 //   armor  reduces physical damage, mr (magic resist) reduces magic damage: taken = dmg × 100 / (100 + resist)
 //   as     attack speed — actions per second, one second being TICKS_PER_SECOND ticks (0 = never acts)
-// Roles: attackers deal their AD as physical damage, mages their AP as magic damage, healers heal for their AP,
-// tanks and supports never act — they matter through their passives.
-// Optional ability flags, read by the battle engine:
-//   targetsBack   attacks the right-most enemy instead of the left-most, slipping past Bodyguard (taunt still wins)
-//   armorPen      fraction of the target's armor ignored
-//   lifesteal     heals itself for this fraction of the damage it deals
-//   hitsAll       its attack hits every enemy unit
-//   adjAttackSpeed  adjacent allies gain this much attack speed (0.5 = +50%)
-//   adjResist     adjacent allies gain this much armor and MR
-//   revives       the first time it would die each round, it comes back at half HP instead
-//   staysOnTop    if it survives the round, it stays on top of your deck instead of being discarded
+// Every unit has three abilities, one per board slot (1–3, left to right) — see `positions`, and
+// POSITION_ACTIONS in index.html for how they resolve. acts:false means it never acts on its own in that slot.
 var TICKS_PER_SECOND = 10;
 
 var CARD_DEFS = {
   striker:   { key:'striker',   name:'Striker',   icon:'⚔', role:'attacker', hp:20, ad:10, ap:0,  armor:20, mr:10, as:0.5,
-    effect:'Auto-attacks the enemy front line for its AD as physical damage.' },
+    effect:'Its ability depends on its position.',
+    positions:[
+      { name:'Heavy attack', short:'HEAVY', text:'Hits the enemy front line for 150% of its AD.' },
+      { name:'Buff itself',  short:'RAMP',  text:'Gains +3 AD for the rest of the round, then attacks.' },
+      { name:'Execute',      short:'EXECUTE', text:'Goes for the most damaged enemy and kills it outright at 30% HP or less; otherwise hits it for its AD.' }
+    ] },
   medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:15, ad:0,  ap:10, armor:10, mr:25, as:0.5,
-    effect:'Each action, heals your most wounded unit (by %) for its AP.' },
+    effect:'Its ability depends on its position.',
+    positions:[
+      { name:'Empower', short:'EMPOWER', text:'The ally who will act next gets a 50% stronger next action.' },
+      { name:'Heal',    short:'HEAL',    text:'Heals your weakest ally (by %) for its AP.' },
+      { name:'Revive',  short:'REVIVE',  text:'Once per round, brings back an ally that died this round at half HP. Otherwise heals your weakest ally for double its AP.' }
+    ] },
   predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:18, ad:16, ap:0,  armor:15, mr:10, as:0.5,
-    effect:'Hard-hitting attacker. When it dies, its death throes hit every other unit on your side for 5 true damage.' },
-  bodyguard: { key:'bodyguard', name:'Bodyguard', icon:'⛨', role:'tank',     hp:22, ad:0,  ap:0,  armor:50, mr:20, as:0,
-    effect:'Every enemy attack aimed at another of your units hits Bodyguard instead, for as long as it lives.' },
-  bulwark:   { key:'bulwark',   name:'Bulwark',   icon:'⛊', role:'tank',     hp:16, ad:0,  ap:0,  armor:40, mr:40, as:0,
-    effect:'If Bulwark is your only unit when the battle begins, it doubles its HP and taunts — every enemy attack must target it.' },
-
-  arcanist:    { key:'arcanist',    name:'Arcanist',    icon:'✦', role:'mage',     hp:14, ad:0,  ap:12, armor:10, mr:20, as:0.5,
-    effect:'Blasts the enemy front line for its AP as magic damage — armor does nothing against it, only MR.' },
-  stormcaller: { key:'stormcaller', name:'Stormcaller', icon:'☈', role:'mage',     hp:16, ad:0,  ap:6,  armor:10, mr:25, as:0.33, hitsAll:true,
-    effect:'Slow caster. Each cast hits every enemy unit for its AP as magic damage.' },
-  shade:       { key:'shade',       name:'Shade',       icon:'☾', role:'attacker', hp:14, ad:12, ap:0,  armor:15, mr:15, as:0.5, targetsBack:true,
-    effect:'Assassin. Attacks the enemy back line (right-most unit) and slips past Bodyguard. A taunt still pulls it.' },
-  duelist:     { key:'duelist',     name:'Duelist',     icon:'⚚', role:'attacker', hp:16, ad:4,  ap:0,  armor:15, mr:10, as:1,
-    effect:'Attacks twice as often as anyone else, for small hits — shreds fragile units, bounces off heavy armor.' },
-  marksman:    { key:'marksman',    name:'Marksman',    icon:'➶', role:'attacker', hp:12, ad:20, ap:0,  armor:10, mr:10, as:0.35, armorPen:0.5,
-    effect:"Slow, heavy shots that ignore half the target's armor. Built to crack tanks." },
-  leech:       { key:'leech',       name:'Leech',       icon:'❦', role:'attacker', hp:18, ad:8,  ap:0,  armor:15, mr:15, as:0.5, lifesteal:0.5,
-    effect:'Heals itself for half the damage it deals.' },
-  phoenix:     { key:'phoenix',     name:'Phoenix',     icon:'♨', role:'attacker', hp:14, ad:8,  ap:0,  armor:10, mr:10, as:0.5, revives:true,
-    effect:'The first time it would die each round, it bursts back to life at half HP.' },
-  veteran:     { key:'veteran',     name:'Veteran',     icon:'✪', role:'attacker', hp:20, ad:9,  ap:0,  armor:20, mr:15, as:0.5, staysOnTop:true,
-    effect:'If Veteran survives the round, it stays on top of your deck for the next round instead of being discarded.' },
-  drummer:     { key:'drummer',     name:'War Drummer', icon:'♫', role:'support',  hp:16, ad:0,  ap:0,  armor:15, mr:15, as:0, adjAttackSpeed:0.5,
-    effect:'Never attacks. Units next to it attack 50% faster. Best in the middle slot.' },
-  warden:      { key:'warden',      name:'Warden',      icon:'⛉', role:'support',  hp:20, ad:0,  ap:0,  armor:30, mr:30, as:0, adjResist:20,
-    effect:'Never attacks. Units next to it gain +20 armor and +20 MR. Best in the middle slot.' }
+    effect:'Its ability depends on its position.',
+    positions:[
+      { name:'Mark',   short:'MARK',   text:'Marks the most dangerous unmarked enemy (highest AD or AP). Marked units take 25% more damage from everything.' },
+      { name:'Hunt',   short:'HUNT',   text:'Attacks a marked enemy wherever it stands. With no mark on the board, attacks the front line.' },
+      { name:'Trophy', short:'TROPHY', text:'Attacks the front line. Every kill permanently gives this card +2 AD for the rest of the game.' }
+    ] },
+  warden:      { key:'warden',      name:'Warden',      icon:'⛉', role:'support',  hp:20, ad:6,  ap:0,  armor:30, mr:30, as:0.5,
+    effect:'Its ability depends on its position.',
+    positions:[
+      { name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor for the rest of the round. Stacks.' },
+      { name:'Guard',   short:'GUARD',   text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
+      { name:'Counter', short:'COUNTER', acts:false, text:'Never acts on its own. Whenever an enemy attack hits Warden, it strikes the attacker back for its AD.' }
+    ] }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).
 Object.keys(CARD_DEFS).forEach(function(k){
@@ -59,7 +47,7 @@ Object.keys(CARD_DEFS).forEach(function(k){
 });
 
 var DECK_SIZE = 9;   // every deck is exactly this many cards
-var DEFAULT_RECIPE = { striker:1, medic:1, bodyguard:1, arcanist:1, shade:1, duelist:1, marksman:1, drummer:1, warden:1 };
+var DEFAULT_RECIPE = { striker:3, medic:2, predator:2, warden:2 };
 var MAX_COPIES = 6;
 var ROUND_PICKS = 3;   // each round you field units from the top 3 cards of your deck
 var DECK_STORAGE_KEY = 'fd7-deck-recipes';
@@ -72,21 +60,29 @@ function el(tag, cls, attrs){
 }
 
 function roleLabel(card){
-  return { attacker:'Attacker', mage:'Mage', healer:'Healer', tank:'Tank', support:'Support' }[card.role];
+  return { attacker:'Attacker', healer:'Healer', support:'Support' }[card.role];
 }
 
-// ['HP 20', 'AD 10', 'AP 0', 'ARM 20', 'MR 10', 'AS 0.50']
+// ['HP 20', 'AD 10', 'AP 0', 'ARM 20', 'MR 10', 'AS 0.50']. AD includes permanent bonuses (Predator trophies).
 function statList(card){
-  return ['HP ' + card.hp, 'AD ' + card.ad, 'AP ' + card.ap, 'ARM ' + card.armor, 'MR ' + card.mr,
+  return ['HP ' + card.hp, 'AD ' + (card.ad + (card.bonusAd || 0)), 'AP ' + card.ap, 'ARM ' + card.armor, 'MR ' + card.mr,
           'AS ' + (card.as > 0 ? card.as.toFixed(2) : '—')];
 }
 
-// Title, stat pills and effect text for a "Card Info" panel.
-function cardInfoHtml(card){
+// Title, stat pills and effect text for a "Card Info" panel. For positional units, lists all three abilities and
+// highlights the one for activeSlot (0–2) when the card is on the board.
+function cardInfoHtml(card, activeSlot){
+  var effect = card.positions
+    ? '<div class="pos-list">' + card.positions.map(function(pos, i){
+        return '<div class="pos-item' + (i === activeSlot ? ' active' : '') + '"><span class="pos-num mono">' + (i + 1) + '</span>' +
+          '<div><b>' + pos.name + '</b> — ' + pos.text + '</div></div>';
+      }).join('') + '</div>'
+    : '<div class="inspector-effect">' + card.effect + '</div>';
   return '<div class="inspector-title"><div class="inspector-icon">' + card.icon + '</div>' +
-    '<div><div class="inspector-name">' + card.name + '</div><div class="inspector-role">' + roleLabel(card) + '</div></div></div>' +
+    '<div><div class="inspector-name">' + card.name + '</div><div class="inspector-role">' + roleLabel(card) +
+    (card.positions ? ' · ability by position' : '') + '</div></div></div>' +
     '<div class="inspector-stats">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
-    '<div class="inspector-effect">' + card.effect + '</div>';
+    effect;
 }
 
 // ---------- Deck recipes: { cardKey: copies }, one per player, kept in localStorage ----------

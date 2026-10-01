@@ -39,8 +39,6 @@
   .deck-row .num.key{ color:var(--role); font-weight:600; }
   .deck-row.r-attacker{ --role:var(--danger); }
   .deck-row.r-healer{ --role:var(--heal); }
-  .deck-row.r-tank{ --role:var(--tank); }
-  .deck-row.r-mage{ --role:var(--magic); }
   .deck-row.r-support{ --role:var(--support); }
   .deck-row .pos{ color:var(--text-dim); font-size:.66rem; }
   .deck-row.selected{ background:var(--side-bg); outline:2px solid var(--side); outline-offset:-1px; }
@@ -55,14 +53,13 @@
   }
   .tile.r-attacker{ --role:var(--danger); }
   .tile.r-healer{ --role:var(--heal); }
-  .tile.r-tank{ --role:var(--tank); }
-  .tile.r-mage{ --role:var(--magic); }
   .tile.r-support{ --role:var(--support); }
   .prio{
     position:absolute; top:3px; left:4px; font-size:.58rem; font-weight:600; color:var(--text-dim);
     border:1px solid var(--line); border-radius:999px; min-width:15px; padding:0 3px; text-align:center; background:var(--panel);
   }
   .line.buff{ color:var(--support); }
+  .tile .line.status{ font-size:.55rem; font-weight:600; letter-spacing:.03em; color:var(--danger); text-align:center; line-height:1.2; }
   .tile .icon{ font-size:1.4rem; line-height:1.1; }
   .tile .name{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.76rem; text-align:center; line-height:1.1; }
   .tile .line{ font-size:.64rem; color:var(--text-dim); }
@@ -180,7 +177,6 @@
 <script>
 (function(){
   var UNIT_SLOTS = 3, SIM_TICKS = 60;
-  var PREDATOR_DEATH_AOE = 5;
   var state;
   var cardUid = 0;
 
@@ -261,7 +257,7 @@
     }
     if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.pos, slot);
   }
-  function newUnit(card){ return { card: card, hp: card.hp, maxHp: card.hp, taunting: false }; }
+  function newUnit(card){ return { card: card, hp: card.hp, maxHp: card.hp }; }
   // At the start of every round each player's top picks are placed automatically, in deck order, into
   // slots 1–3. Players can still rearrange them before the battle.
   function autoPlace(){
@@ -285,16 +281,9 @@
     state.tick = 0;
     state.queue = [];
     state.selected = null;
+    state.fallen = [[], []];   // units that died this round, for revives
     state.spotlight = { title: 'Battle begins', fromSeq: state.logSeq };
     addLog('Round ' + state.round + ': battle begins.', 'meta');
-    state.players.forEach(function(p){
-      var alive = p.units.filter(Boolean);
-      if (alive.length === 1 && alive[0].card.key === 'bulwark'){
-        var b = alive[0];
-        b.maxHp *= 2; b.hp *= 2; b.taunting = true;
-        addLog(p.name + "'s Bulwark stands alone — it doubles its HP to " + b.hp + ' and taunts.', 'meta');
-      }
-    });
     if (!checkForWipe()) startClock();   // a side that fielded no units loses on the spot
   }
 
@@ -316,23 +305,12 @@
     return order.sort(function(a, b){ return a.prio - b.prio; });
   }
 
-  // ---------- Effective stats (base stats plus neighbours' auras) ----------
-  function neighbours(side, slot){
-    var units = state.players[side].units;
-    return [units[slot - 1], units[slot + 1]].filter(Boolean);
-  }
-  function resistBonus(side, slot){
-    return neighbours(side, slot).reduce(function(a, n){ return a + (n.card.adjResist || 0); }, 0);
-  }
-  function armorOf(side, slot){ return state.players[side].units[slot].card.armor + resistBonus(side, slot); }
-  function mrOf(side, slot){ return state.players[side].units[slot].card.mr + resistBonus(side, slot); }
-  function attackSpeedOf(side, slot){
-    var u = state.players[side].units[slot];
-    var bonus = neighbours(side, slot).reduce(function(a, n){ return a + (n.card.adjAttackSpeed || 0); }, 0);
-    return u.card.as * (1 + bonus);
-  }
+  // ---------- Effective stats (base stats plus this round's buffs) ----------
+  function armorOf(side, slot){ var u = state.players[side].units[slot]; return u.card.armor + (u.bonusArmor || 0); }
+  function mrOf(side, slot){ return state.players[side].units[slot].card.mr; }
   function cooldownOf(side, slot){
-    var as = attackSpeedOf(side, slot);
+    if (!actsInSlot(state.players[side].units[slot].card, slot)) return Infinity;
+    var as = state.players[side].units[slot].card.as;
     return as > 0 ? Math.round(TICKS_PER_SECOND / as) : Infinity;
   }
 
@@ -428,66 +406,198 @@
     document.getElementById('roundFill').style.width = (Math.min(t, SIM_TICKS) / SIM_TICKS * 100) + '%';
   }
 
+  // ---------- Actions ----------
+  // Every unit does something different in each board slot — see POSITION_ACTIONS.
+  var EMPOWER_MULT = 1.5, MARK_MULT = 1.25, EXECUTE_BELOW = 0.3, STRIKER_RAMP_AD = 3, TROPHY_AD = 2, FORTIFY_ARMOR = 5;
+
+  function adOf(u){ return u.card.ad + (u.card.bonusAd || 0) + (u.bonusAd || 0); }
+
   function act(side, slot, u){
-    if (u.card.role === 'attacker' || u.card.role === 'mage') attack(side, slot, u);
-    else if (u.card.role === 'healer') heal(side, u);
+    var mult = 1;
+    if (u.empowered){ mult = EMPOWER_MULT; u.empowered = false; }
+    return POSITION_ACTIONS[u.card.key][slot](side, slot, u, mult);
   }
 
-  // Taunt beats everything. Otherwise attacks go at the left-most unit, unless a Bodyguard steps in —
-  // back-line attackers (Shade) go for the right-most unit instead and slip past Bodyguard.
-  function pickTarget(dp, targetsBack){
-    var taunt = -1, first = -1, last = -1, guard = -1;
-    dp.units.forEach(function(u, i){
-      if (!u) return;
-      if (u.taunting && taunt === -1) taunt = i;
-      if (first === -1) first = i;
-      last = i;
-      if (u.card.key === 'bodyguard' && guard === -1) guard = i;
-    });
-    if (taunt !== -1) return { slot: taunt };
-    if (first === -1) return null;
-    if (targetsBack) return { slot: last };
-    if (guard !== -1 && guard !== first) return { slot: guard, shielded: first };
-    return { slot: first };
+  function say(side, u, text, type){
+    addLog('t' + state.tick + ': ' + state.players[side].name + "'s " + u.card.name + ' ' + text, type || 'meta');
   }
 
-  function attack(side, slot, u){
-    var dSide = 1 - side, dp = state.players[dSide];
-    var label = state.players[side].name + "'s " + u.card.name;
-    var magic = u.card.role === 'mage';
-    var amount = magic ? u.card.ap : u.card.ad;
-    var type = magic ? 'magic' : 'physical';
-    if (u.card.hitsAll){
-      addLog('t' + state.tick + ': ' + label + ' calls down a storm on every enemy unit.', 'attack');
-      dp.units.slice().forEach(function(target, i){ if (target && dp.units[i] === target) dealDamage(dSide, i, amount, type, label); });
-      return;
+  var POSITION_ACTIONS = {
+    striker: [
+      // 1 · Heavy attack
+      function(side, slot, u, mult){ frontStrike(side, slot, u, Math.round(adOf(u) * 1.5 * mult), 'heavy attack'); },
+      // 2 · Buff itself, then attack
+      function(side, slot, u, mult){
+        u.bonusAd = (u.bonusAd || 0) + STRIKER_RAMP_AD;
+        state.fx.healed.push(u);
+        say(side, u, 'powers up: +' + STRIKER_RAMP_AD + ' AD (now ' + adOf(u) + ').', 'heal');
+        frontStrike(side, slot, u, Math.round(adOf(u) * mult));
+      },
+      // 3 · Execute a damaged enemy
+      function(side, slot, u, mult){
+        var dSide = 1 - side, dp = state.players[dSide], best = -1, bestPct = 1;
+        dp.units.forEach(function(e, i){ if (e && e.hp < e.maxHp && e.hp / e.maxHp < bestPct){ bestPct = e.hp / e.maxHp; best = i; } });
+        if (best === -1) return frontStrike(side, slot, u, Math.round(adOf(u) * mult));
+        var target = chooseTarget(dp, best);
+        var victim = dp.units[best];
+        var unguarded = !victim.guardedBy || dp.units.indexOf(victim.guardedBy) === -1;
+        if (target.slot === best && unguarded && victim.hp <= victim.maxHp * EXECUTE_BELOW){
+          state.fx.hit.push(victim);
+          say(side, u, 'executes ' + dp.name + "'s " + victim.card.name + ' at ' + victim.hp + ' HP!', 'destroy');
+          killUnit(dSide, best);
+          return;
+        }
+        strike(side, slot, u, dSide, target, Math.round(adOf(u) * mult), 'physical', { what: 'execute' });
+      }
+    ],
+    medic: [
+      // 1 · Empower the ally who acts next
+      function(side, slot, u){
+        var p = state.players[side], best = null, bestTick = Infinity, bestPrio = Infinity;
+        p.units.forEach(function(a, i){
+          if (!a || a === u || a.empowered) return;
+          var cd = cooldownOf(side, i);
+          if (!isFinite(cd)) return;
+          var queued = state.queue.some(function(q){ return q.side === side && q.slot === i; });
+          var at = queued ? state.tick : (Math.floor(state.tick / cd) + 1) * cd;
+          var prio = priority(side, i);
+          if (at < bestTick || (at === bestTick && prio < bestPrio)){ best = a; bestTick = at; bestPrio = prio; }
+        });
+        if (!best){ say(side, u, 'has no ally to empower.', 'idle'); return; }
+        best.empowered = true;
+        state.fx.healed.push(best);
+        say(side, u, 'empowers ' + best.card.name + ': its next action is ' + Math.round((EMPOWER_MULT - 1) * 100) + '% stronger.', 'heal');
+      },
+      // 2 · Heal the weakest ally
+      function(side, slot, u, mult){ healWeakest(side, u, Math.round(u.card.ap * mult)); },
+      // 3 · Revive (once per round), otherwise a large heal
+      function(side, slot, u, mult){
+        var p = state.players[side];
+        if (!u.usedRevive){
+          var fallen = state.fallen[side].filter(function(f){ return !p.units[f.slot]; }).pop();
+          if (fallen){
+            u.usedRevive = true;
+            state.fallen[side].splice(state.fallen[side].indexOf(fallen), 1);
+            var back = newUnit(fallen.card);
+            back.hp = Math.ceil(back.maxHp / 2);
+            p.units[fallen.slot] = back;
+            state.fx.healed.push(back);
+            say(side, u, 'revives ' + fallen.card.name + ' with ' + back.hp + ' HP!', 'heal');
+            return;
+          }
+        }
+        healWeakest(side, u, Math.round(u.card.ap * 2 * mult), 'large heal');
+      }
+    ],
+    predator: [
+      // 1 · Mark the most dangerous unmarked enemy
+      function(side, slot, u){
+        var dp = state.players[1 - side], best = -1, bestPow = -1;
+        dp.units.forEach(function(e, i){
+          if (!e || e.marked) return;
+          var pow = Math.max(adOf(e), e.card.ap);
+          if (pow > bestPow){ bestPow = pow; best = i; }
+        });
+        if (best === -1){ say(side, u, 'has no unmarked enemy to mark.', 'idle'); return; }
+        var e = dp.units[best];
+        e.marked = true;
+        state.fx.hit.push(e);
+        say(side, u, 'marks ' + dp.name + "'s " + e.card.name + ' — it takes ' + Math.round((MARK_MULT - 1) * 100) + '% more damage.', 'attack');
+      },
+      // 2 · Attack the marked enemy
+      function(side, slot, u, mult){
+        var dp = state.players[1 - side], marked = -1;
+        dp.units.forEach(function(e, i){ if (e && e.marked && marked === -1) marked = i; });
+        var target = chooseTarget(dp, marked === -1 ? null : marked);
+        if (target) strike(side, slot, u, 1 - side, target, Math.round(adOf(u) * mult), 'physical', { what: marked === -1 ? '' : 'hunt' });
+      },
+      // 3 · Kill bonus: every kill permanently grows this card
+      function(side, slot, u, mult){
+        frontStrike(side, slot, u, Math.round(adOf(u) * mult), '', function(){
+          u.card.bonusAd = (u.card.bonusAd || 0) + TROPHY_AD;
+          say(side, u, 'claims a trophy: +' + TROPHY_AD + ' AD for the rest of the game (now ' + adOf(u) + ').', 'heal');
+        });
+      }
+    ],
+    warden: [
+      // 1 · Give the team armor
+      function(side, slot, u){
+        state.players[side].units.forEach(function(a){ if (a){ a.bonusArmor = (a.bonusArmor || 0) + FORTIFY_ARMOR; state.fx.healed.push(a); } });
+        say(side, u, 'fortifies: +' + FORTIFY_ARMOR + ' armor to every unit on its side.', 'heal');
+      },
+      // 2 · Guard the weakest other ally until Warden acts again
+      function(side, slot, u){
+        var p = state.players[side], best = -1, bestPct = Infinity;
+        p.units.forEach(function(a, i){
+          if (a && a.guardedBy === u) a.guardedBy = null;
+          if (a && a !== u && a.hp / a.maxHp < bestPct){ bestPct = a.hp / a.maxHp; best = i; }
+        });
+        if (best === -1){ say(side, u, 'has no ally to guard.', 'idle'); return; }
+        p.units[best].guardedBy = u;
+        state.fx.healed.push(p.units[best]);
+        say(side, u, 'guards ' + p.units[best].card.name + ': attacks aimed at it hit Warden instead.', 'meta');
+      },
+      // 3 · Counterattack — passive (see strike); a position-3 Warden never acts on its own
+      function(){}
+    ]
+  };
+  // Does this unit act on its own in this slot? (Position-3 Warden only counterattacks.)
+  function actsInSlot(card, slot){ return !(card.positions && card.positions[slot].acts === false); }
+
+  // Who does an attack on dp hit? The front line (left-most unit) by default, or a specific slot.
+  function chooseTarget(dp, prefer){
+    if (typeof prefer === 'number' && dp.units[prefer]) return { slot: prefer };
+    var first = dp.units.findIndex(Boolean);
+    return first === -1 ? null : { slot: first };
+  }
+
+  function frontStrike(side, slot, u, amount, what, onKill){
+    var target = chooseTarget(state.players[1 - side], null);
+    if (target) strike(side, slot, u, 1 - side, target, amount, 'physical', { what: what, onKill: onKill });
+  }
+
+  // One unit hitting one enemy, with everything that hangs off a hit: Warden's Guard redirect, damage
+  // (marks apply inside dealDamage), kill bonuses and Warden's counterattack.
+  function strike(side, slot, u, dSide, target, amount, type, opts){
+    opts = opts || {};
+    var dp = state.players[dSide];
+    var label = state.players[side].name + "'s " + u.card.name + (opts.what ? ' (' + opts.what + ')' : '');
+    var tSlot = target.slot, victim = dp.units[tSlot];
+    var warden = victim.guardedBy;
+    if (warden && warden !== victim){
+      var wSlot = dp.units.indexOf(warden);
+      if (wSlot !== -1){
+        addLog('t' + state.tick + ': ' + dp.name + "'s Warden takes the hit for " + victim.card.name + '.', 'meta');
+        tSlot = wSlot; victim = warden;
+      } else victim.guardedBy = null;
     }
-    var target = pickTarget(dp, u.card.targetsBack);
-    if (!target) return;
-    if (target.shielded !== undefined) addLog('t' + state.tick + ': ' + dp.name + "'s Bodyguard steps in front of " + dp.units[target.shielded].card.name + '.', 'meta');
-    var dealt = dealDamage(dSide, target.slot, amount, type, label, u.card.armorPen || 0);
-    if (u.card.lifesteal && state.players[side].units[slot] === u && u.hp < u.maxHp){
-      var before = u.hp;
-      u.hp = Math.min(u.maxHp, u.hp + Math.round(dealt * u.card.lifesteal));
-      if (u.hp > before){ state.fx.healed.push(u); addLog('t' + state.tick + ': ' + label + ' drains ' + (u.hp - before) + ' HP.', 'heal'); }
+    var dealt = dealDamage(dSide, tSlot, amount, type, label);
+    var killed = dp.units[tSlot] !== victim;
+    var attackerAlive = state.players[side].units[slot] === u;
+    if (killed && opts.onKill) opts.onKill(victim);
+    // Warden in position 3 strikes back at whoever hit it
+    if (!killed && attackerAlive && victim.card.key === 'warden' && tSlot === 2){
+      dealDamage(side, slot, adOf(victim), 'physical', dp.name + "'s Warden (counterattack)");
     }
+    return dealt;
   }
 
   // Physical damage is reduced by armor, magic by MR, true damage by nothing:
-  // taken = dmg × 100 / (100 + resist), rounded, at least 1. armorPen ignores that fraction of armor.
-  function mitigated(amount, type, side, slot, armorPen){
+  // taken = dmg × 100 / (100 + resist), rounded, at least 1.
+  function mitigated(amount, type, side, slot){
     if (amount <= 0) return 0;
-    var resist = type === 'physical' ? armorOf(side, slot) * (1 - (armorPen || 0)) : type === 'magic' ? mrOf(side, slot) : 0;
+    var resist = type === 'physical' ? armorOf(side, slot) : type === 'magic' ? mrOf(side, slot) : 0;
     return Math.max(1, Math.round(amount * 100 / (100 + resist)));
   }
-  // Returns the damage actually dealt.
-  function dealDamage(side, slot, amount, type, label, armorPen){
+  // Returns the damage actually dealt. Marked units take MARK_MULT damage from everything.
+  function dealDamage(side, slot, amount, type, label){
     var p = state.players[side], u = p.units[slot];
-    var dealt = mitigated(amount, type, side, slot, armorPen);
+    if (u.marked) amount = Math.round(amount * MARK_MULT);
+    var dealt = mitigated(amount, type, side, slot);
     u.hp -= dealt;
     state.fx.hit.push(u);
     var note = dealt === amount ? '' : ' (' + amount + ' ' + type + ', ' + (type === 'physical' ? 'armor' : 'MR') + ' blocked ' + (amount - dealt) + ')';
-    addLog('t' + state.tick + ': ' + label + ' hits ' + p.name + "'s " + u.card.name + ' for ' + dealt + note + '.', 'attack');
+    addLog('t' + state.tick + ': ' + label + ' hits ' + p.name + "'s " + u.card.name + (u.marked ? ' (marked)' : '') + ' for ' + dealt + note + '.', 'attack');
     if (u.hp <= 0) killUnit(side, slot);
     return dealt;
   }
@@ -495,32 +605,21 @@
   function killUnit(side, slot){
     var p = state.players[side], u = p.units[slot];
     if (!u) return;
-    if (u.card.revives && !u.revived){
-      u.revived = true;
-      u.hp = Math.ceil(u.maxHp / 2);
-      state.fx.healed.push(u);
-      addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' bursts back to life with ' + u.hp + ' HP!', 'heal');
-      return;
-    }
     p.units[slot] = null;
+    state.fallen[side].push({ card: u.card, slot: slot });   // for a position-3 Medic's revive
     addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' is destroyed.', 'destroy');
-    if (u.card.key === 'predator'){
-      p.units.forEach(function(other, i){
-        if (other) dealDamage(side, i, PREDATOR_DEATH_AOE, 'true', p.name + "'s dying Predator");
-      });
-    }
   }
 
-  function heal(side, u){
+  function healWeakest(side, u, amount, what){
     var p = state.players[side], best = -1, bestPct = 1;
     p.units.forEach(function(o, i){
       if (o && o.hp < o.maxHp && o.hp / o.maxHp < bestPct){ bestPct = o.hp / o.maxHp; best = i; }
     });
-    if (best === -1){ addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' has nothing to heal.', 'idle'); return; }
+    if (best === -1){ say(side, u, 'has nothing to heal.', 'idle'); return; }
     var o = p.units[best], before = o.hp;
-    o.hp = Math.min(o.maxHp, o.hp + u.card.ap);
+    o.hp = Math.min(o.maxHp, o.hp + amount);
     state.fx.healed.push(o);
-    addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' heals ' + o.card.name + ' for ' + (o.hp - before) + '.', 'heal');
+    say(side, u, (what ? '(' + what + ') ' : '') + 'heals ' + o.card.name + ' for ' + (o.hp - before) + '.', 'heal');
   }
 
   // ---------- Rounds ----------
@@ -548,20 +647,14 @@
     render();
   }
   // Every round is a fresh fight: the board clears and this round's picks — played or not, alive or dead —
-  // go to the discard pile, so the next cards down become the new top. A surviving card with staysOnTop
-  // (Veteran) stays on top for the next round instead. When fewer than ROUND_PICKS cards are left, the
+  // go to the discard pile, so the next cards down become the new top. When fewer than ROUND_PICKS cards are left, the
   // discard pile is shuffled and slid under them, so there are always a full set of picks.
   function nextRound(){
     if (state.phase !== 'roundEnd') return;
     state.players.forEach(function(p){
-      var survivors = p.units.filter(function(u){ return u && u.card.staysOnTop; }).map(function(u){ return u.card; });
       var n = pickCount(p);
-      var picks = p.deck.slice(0, n);
-      var stay = picks.filter(function(c){ return survivors.indexOf(c) !== -1; });
-      var go = picks.filter(function(c){ return stay.indexOf(c) === -1; });
-      p.deck = stay.concat(p.deck.slice(n));
-      p.discard = p.discard.concat(go);
-      stay.forEach(function(c){ addLog(p.name + "'s " + c.name + ' survived — it stays on top of the deck.', 'meta'); });
+      p.discard = p.discard.concat(p.deck.slice(0, n));
+      p.deck = p.deck.slice(n);
       if (p.deck.length < ROUND_PICKS && p.discard.length){
         p.deck = p.deck.concat(shuffle(p.discard));
         p.discard = [];
@@ -584,17 +677,27 @@
   // ---------- Rendering ----------
   var PHASE_LABEL = { setup: 'Setup', battle: 'Battle', roundEnd: 'Round over' };
 
-  function roleLine(card, u){
-    if (u && u.taunting) return '<div class="line hot">TAUNT</div>';
-    if (card.role === 'attacker') return '<div class="line hot mono">AD ' + card.ad + '</div>';
-    if (card.role === 'healer' || card.role === 'mage') return '<div class="line hot mono">AP ' + card.ap + '</div>';
-    if (card.role === 'support') return '<div class="line hot">AURA</div>';
-    return '<div class="line hot mono">ARM ' + card.armor + '</div>';
+  // The tile's headline: the unit's ability for the slot it is in.
+  function roleLine(card, u, slot){
+    var pos = card.positions[slot];
+    return '<div class="line hot" title="' + pos.name + ': ' + pos.text + '">' + pos.short + '</div>';
   }
 
   function prioBadge(side, slot){
     var n = priority(side, slot);
     return '<div class="prio mono" title="Turn order ' + n + ' — lower acts first on the same tick">' + n + '</div>';
+  }
+
+  // Temporary states worth seeing at a glance.
+  function statusLine(u){
+    var tags = [];
+    if (u.marked) tags.push('MARKED');
+    if (u.guardedBy) tags.push('GUARDED');
+    if (u.empowered) tags.push('EMPOWERED');
+    var bonus = (u.card.bonusAd || 0) + (u.bonusAd || 0);
+    if (bonus) tags.push('+' + bonus + ' AD');
+    if (u.bonusArmor) tags.push('+' + u.bonusArmor + ' ARM');
+    return tags.length ? '<div class="line status">' + tags.join(' · ') + '</div>' : '';
   }
 
   function renderUnit(side, slot, next){
@@ -619,8 +722,8 @@
       tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to take it off the board' : '')
     });
     tile.innerHTML = prioBadge(side, slot) + (isNext ? '<div class="next-tag">NEXT</div>' : '') +
-      '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u) +
-      '<div class="line mono' + (buffed ? ' buff' : '') + '" title="Armor and magic resist, including buffs from neighbours">ARM ' + arm + ' · MR ' + mr + '</div>' +
+      '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u, slot) + statusLine(u) +
+      '<div class="line mono' + (buffed ? ' buff' : '') + '" title="Armor and magic resist, including buffs this round">ARM ' + arm + ' · MR ' + mr + '</div>' +
       '<div class="line mono">' + u.hp + '/' + u.maxHp + ' HP</div>' +
       '<div class="bar hp' + (hpPct < .34 ? ' low' : '') + '"><div style="width:' + (hpPct * 100) + '%"></div></div>' +
       '<div class="bar cd" title="Charge — acts when full"><div data-charge="' + side + '-' + slot + '" style="width:' + (cdPct * 100) + '%"></div></div>';
@@ -629,10 +732,10 @@
   }
 
   var STAT_COLS = ['HP', 'AD', 'AP', 'ARM', 'MR', 'AS'];
-  // The stat each role cares about most is highlighted: damage for attackers, heal power for healers, armor for tanks.
-  var KEY_STAT = { attacker: 'AD', mage: 'AP', healer: 'AP', tank: 'ARM' };
+  // The stat each role cares about most is highlighted: damage for attackers, heal power for healers.
+  var KEY_STAT = { attacker: 'AD', healer: 'AP' };
   function statCells(card){
-    var vals = { HP: card.hp, AD: card.ad, AP: card.ap, ARM: card.armor, MR: card.mr, AS: card.as };
+    var vals = { HP: card.hp, AD: card.ad + (card.bonusAd || 0), AP: card.ap, ARM: card.armor, MR: card.mr, AS: card.as };
     return STAT_COLS.map(function(k){
       var v = vals[k];
       var text = k === 'AS' ? (v > 0 ? v.toFixed(2) : '—') : v;
@@ -719,15 +822,17 @@
       return;
     }
     box.className = 'inspector r-' + ins.card.role;
-    var html = cardInfoHtml(ins.card);
     var u = ins.slot != null ? state.players[ins.side].units[ins.slot] : null;
+    var html = cardInfoHtml(ins.card, u && u.card === ins.card ? ins.slot : undefined);
     if (u && u.card === ins.card){
       var live = ['On ' + state.players[ins.side].name + "'s board", 'Turn order ' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,
                   'ARM ' + armorOf(ins.side, ins.slot) + ' · MR ' + mrOf(ins.side, ins.slot)];
-      if (u.taunting) live.push('Taunting');
-      if (u.revived) live.push('Already revived this round');
+      if (u.marked) live.push('Marked: takes 25% more damage');
+      if (u.guardedBy) live.push('Guarded by Warden');
+      if (u.empowered) live.push('Empowered: next action 50% stronger');
+      if (ins.card.bonusAd) live.push('Trophies: +' + ins.card.bonusAd + ' AD for the game');
       var icd = cooldownOf(ins.side, ins.slot);
-      if (isFinite(icd)) live.push('Acts every ' + icd + ' ticks' + (icd !== u.card.cooldown ? ' (sped up)' : ''));
+      live.push(isFinite(icd) ? 'Acts every ' + icd + ' ticks' : 'Only counterattacks in this slot');
       html += '<div class="inspector-live">' + live.join(' · ') + '</div>';
     }
     body.innerHTML = html;
