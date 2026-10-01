@@ -113,7 +113,7 @@
       '<div class="info"><div class="name">' + card.name + '<small>' + roleLabel(card) + '</small></div>' +
       (withDetails
         ? '<div class="pills">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
-          '<div class="fx">' + (card.abilities.length > 1 ? 'Abilities (pick 1 each round): ' : 'Ability: ') +
+          '<div class="fx">' + (card.abilities.length > 1 ? 'Abilities (pick 1, switchable mid-battle): ' : 'Ability: ') +
             card.abilities.map(function(ab){ return ab.name; }).join(' · ') + '</div>'
         : '') +
       '</div>' +

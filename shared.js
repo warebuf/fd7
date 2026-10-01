@@ -74,7 +74,7 @@ function findAbility(card, id){
 }
 
 // Title, stat pills and abilities for a "Card Info" panel. activeId highlights the ability the unit is using;
-// pickable makes each ability clickable (data-ability) so it can be chosen during setup.
+// pickable makes each ability clickable (data-ability) so it can be switched (setup, or a paused battle).
 function cardInfoHtml(card, activeId, pickable){
   var effect = '<div class="pos-list">' + card.abilities.map(function(ab){
     return '<div class="pos-item' + (ab.id === activeId ? ' active' : '') + (pickable ? ' pickable" data-ability="' + ab.id + '" role="button" tabindex="0' : '') + '">' +
@@ -83,7 +83,7 @@ function cardInfoHtml(card, activeId, pickable){
   var count = card.abilities.length;
   return '<div class="inspector-title"><div class="inspector-icon">' + card.icon + '</div>' +
     '<div><div class="inspector-name">' + card.name + '</div><div class="inspector-role">' + roleLabel(card) +
-    (count > 1 ? ' · choose 1 of ' + count + ' abilities each round' : '') + '</div></div></div>' +
+    (count > 1 ? ' · choose 1 of ' + count + ' abilities' : '') + '</div></div></div>' +
     '<div class="inspector-stats">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
     effect;
 }
