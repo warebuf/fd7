@@ -24,7 +24,7 @@ var CARD_DEFS = {
     ] },
   predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:18, ad:16, ap:0,  armor:15, mr:10, as:0.5,
     abilities:[
-      { id:'trophy', name:'Trophy', short:'TROPHY', text:'Attacks the front line. Every kill permanently gives this card +2 AD for the rest of the game.' }
+      { id:'trophy', name:'Trophy', short:'TROPHY', text:'Attacks the frontmost unit. Every kill permanently gives this card +2 AD for the rest of the game.' }
     ] },
   warden:    { key:'warden',    name:'Warden',    icon:'⛉', role:'support',  hp:20, ad:0,  ap:0,  armor:30, mr:30, as:0.5,
     abilities:[

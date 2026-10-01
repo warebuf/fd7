@@ -515,9 +515,9 @@
     heal: function(side, slot, u){ healWeakest(side, u, apOf(u)); },
     // Medic · AD buff for the whole side
     adbuff: function(side, slot, u){ buffTeam(side, u, 'bonusAd', MEDIC_AD_BUFF, 'AD'); },
-    // Predator · Trophy: every kill permanently grows this card
+    // Predator · Trophy: attack the frontmost enemy; every kill permanently grows this card
     trophy: function(side, slot, u){
-        frontStrike(side, slot, u, Math.round(adOf(u)), '', function(){
+        frontStrike(side, slot, u, adOf(u), '', function(){
           u.card.bonusAd = (u.card.bonusAd || 0) + TROPHY_AD;
           say(side, u, 'claims a trophy: +' + TROPHY_AD + ' AD for the rest of the game (now ' + adOf(u) + ').', 'heal');
         });
@@ -570,7 +570,8 @@
       }
   };
 
-  // Who does an attack on dp hit? The front line (left-most unit) by default, or a specific slot.
+  // Who does an attack on dp hit? The frontmost unit (front slot, else middle, else back) by default, or a
+  // specific slot.
   function chooseTarget(dp, prefer){
     if (typeof prefer === 'number' && dp.units[prefer]) return { slot: prefer };
     var first = dp.units.findIndex(Boolean);
