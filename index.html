@@ -22,6 +22,8 @@
   .panel-title{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.95rem; color:var(--side); flex:1 1 auto; }
   .row-label{ font-size:.6rem; text-transform:uppercase; letter-spacing:.07em; color:var(--text-dim); margin-bottom:4px; }
   .row{ display:flex; flex-wrap:wrap; gap:8px; }
+  .slot-names{ display:flex; gap:8px; }
+  .slot-names .row-label{ width:92px; text-align:center; }
   .deck-section{ flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
   .deck-list{ display:flex; flex-direction:column; gap:3px; }
   /* deck rows are a small table: position, icon, name, then one aligned column per stat */
@@ -259,7 +261,7 @@
   }
   function newUnit(card){ return { card: card, hp: card.hp, maxHp: card.hp }; }
   // At the start of every round each player's top picks are placed automatically, in deck order, into
-  // slots 1–3. Players can still rearrange them before the battle.
+  // the front, middle and back slots. Players can still rearrange them before the battle.
   function autoPlace(){
     state.players.forEach(function(p){
       for (var pos = 0; pos < pickCount(p); pos++) p.units[pos] = newUnit(p.deck[pos]);
@@ -291,7 +293,7 @@
   function oddSide(){ return (state.round - 1) % 2; }
   function priority(side, slot){ return 2 * slot + (side === oddSide() ? 1 : 2); }
   function logTurnOrder(){
-    addLog('Turn order: ' + state.players[oddSide()].name + ' has slots 1·3·5, ' + state.players[1 - oddSide()].name + ' has 2·4·6.', 'meta');
+    addLog('Turn order: ' + state.players[oddSide()].name + ' acts #1, #3, #5 and ' + state.players[1 - oddSide()].name + ' #2, #4, #6 on shared ticks.', 'meta');
   }
   function actorsAt(t){
     var order = [];
@@ -416,17 +418,18 @@
   // Every unit does something different in each board slot — see POSITION_ACTIONS.
   var MEDIC_AP_BUFF = 5, MEDIC_AD_BUFF = 3, MARK_SHRED = 10, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5;
 
-  function adOf(u){ return u.card.ad + (u.card.bonusAd || 0) + (u.bonusAd || 0); }
-  function apOf(u){ return u.card.ap + (u.bonusAp || 0); }
+  // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
+  function adOf(u){ return u.card.ad + (u.card.bonusAd || 0); }
+  function apOf(u){ return u.card.ap + (u.card.bonusAp || 0); }
 
   function act(side, slot, u){
     return POSITION_ACTIONS[u.card.key][slot](side, slot, u);
   }
 
-  // Every unit on the side (the buffer included) gains `amount` of a stat for the rest of the round. Stacks.
+  // Every unit on the side (the buffer included) permanently gains `amount` of a stat, stored on its card. Stacks.
   function buffTeam(side, u, field, amount, statName){
-    state.players[side].units.forEach(function(a){ if (a){ a[field] = (a[field] || 0) + amount; state.fx.healed.push(a); } });
-    say(side, u, 'rallies the team: +' + amount + ' ' + statName + ' to every unit on its side.', 'heal');
+    state.players[side].units.forEach(function(a){ if (a){ a.card[field] = (a.card[field] || 0) + amount; state.fx.healed.push(a); } });
+    say(side, u, 'rallies the team: +' + amount + ' ' + statName + ' for the rest of the game to every unit on its side.', 'heal');
   }
 
   function say(side, u, text, type){
@@ -514,7 +517,7 @@
         state.fx.healed.push(p.units[best]);
         say(side, u, 'guards ' + p.units[best].card.name + ': attacks aimed at it hit Warden instead.', 'meta');
       },
-      // 3 · Counterattack — passive (see strike); a position-3 Warden never acts on its own
+      // 3 · Counterattack — passive (see strike); a Warden in the back slot never acts on its own
       function(){}
     ]
   };
@@ -552,7 +555,7 @@
     var killed = dp.units[tSlot] !== victim;
     var attackerAlive = state.players[side].units[slot] === u;
     if (killed && opts.onKill) opts.onKill(victim);
-    // Warden in position 3 strikes back at whoever hit it
+    // Warden in the back slot strikes back at whoever hit it
     if (!killed && attackerAlive && victim.card.key === 'warden' && tSlot === 2){
       dealDamage(side, slot, adOf(victim), 'physical', dp.name + "'s Warden (counterattack)");
     }
@@ -660,7 +663,7 @@
 
   function prioBadge(side, slot){
     var n = priority(side, slot);
-    return '<div class="prio mono" title="Turn order ' + n + ' — lower acts first on the same tick">' + n + '</div>';
+    return '<div class="prio mono" title="Turn order #' + n + ' — lower acts first on the same tick">#' + n + '</div>';
   }
 
   // Temporary states worth seeing at a glance.
@@ -668,9 +671,8 @@
     var tags = [];
     if (u.marked) tags.push('MARKED −' + MARK_SHRED + ' ARM/MR');
     if (u.guardedBy) tags.push('GUARDED');
-    var bonus = (u.card.bonusAd || 0) + (u.bonusAd || 0);
-    if (bonus) tags.push('+' + bonus + ' AD');
-    if (u.bonusAp) tags.push('+' + u.bonusAp + ' AP');
+    if (u.card.bonusAd) tags.push('+' + u.card.bonusAd + ' AD');
+    if (u.card.bonusAp) tags.push('+' + u.card.bonusAp + ' AP');
     if (u.card.bonusArmor) tags.push('+' + u.card.bonusArmor + ' ARM');
     return tags.length ? '<div class="line status">' + tags.join(' · ') + '</div>' : '';
   }
@@ -710,7 +712,7 @@
   // The stat each role cares about most is highlighted: damage for attackers, heal power for healers.
   var KEY_STAT = { attacker: 'AD', healer: 'AP' };
   function statCells(card){
-    var vals = { HP: card.hp, AD: card.ad + (card.bonusAd || 0), AP: card.ap, ARM: card.armor + (card.bonusArmor || 0), MR: card.mr, AS: card.as };
+    var vals = { HP: card.hp, AD: card.ad + (card.bonusAd || 0), AP: card.ap + (card.bonusAp || 0), ARM: card.armor + (card.bonusArmor || 0), MR: card.mr, AS: card.as };
     return STAT_COLS.map(function(k){
       var v = vals[k];
       var text = k === 'AS' ? (v > 0 ? v.toFixed(2) : '—') : v;
@@ -733,7 +735,7 @@
     var sel = isPick && state.selected && state.selected.side === side && state.selected.pos === pos;
     var row = el('div', 'deck-row r-' + card.role + (sel ? ' selected' : '') + (placed ? ' placed' : ''), {
       tabindex: '0', role: 'button',
-      title: card.name + ' — position ' + (pos + 1) + ' from the top' +
+      title: card.name + ' — card ' + (pos + 1) + ' from the top of the deck' +
         (placed ? ' (on the board)' : isPick && state.phase === 'setup' ? ' — click to select, double-click to place' : '')
     });
     row.innerHTML = '<span class="pos mono">' + (pos + 1) + '</span><span>' + card.icon + '</span>' +
@@ -754,7 +756,8 @@
       '<span class="pill mono" title="Cards in deck">Deck ' + p.deck.length + '</span>' +
       '<span class="pill mono" title="Cards in the discard pile">Discard ' + p.discard.length + '</span></div>';
     var unitsSec = panel.appendChild(el('div', '', {}));
-    unitsSec.appendChild(el('div', 'row-label', {})).textContent = 'Units';
+    var slotNames = unitsSec.appendChild(el('div', 'slot-names', {}));
+    SLOT_NAMES.forEach(function(n){ slotNames.appendChild(el('div', 'row-label', {})).textContent = n; });
     var unitsRow = unitsSec.appendChild(el('div', 'row', {}));
     for (var slot = 0; slot < UNIT_SLOTS; slot++) unitsRow.appendChild(renderUnit(side, slot, next));
 
@@ -800,12 +803,12 @@
     var u = ins.slot != null ? state.players[ins.side].units[ins.slot] : null;
     var html = cardInfoHtml(ins.card, u && u.card === ins.card ? ins.slot : undefined);
     if (u && u.card === ins.card){
-      var live = ['On ' + state.players[ins.side].name + "'s board", 'Turn order ' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,
+      var live = ['On ' + state.players[ins.side].name + "'s board", SLOT_NAMES[ins.slot] + ' slot', 'Turn order #' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,
                   'ARM ' + armorOf(ins.side, ins.slot) + ' · MR ' + mrOf(ins.side, ins.slot)];
       if (u.marked) live.push('Marked: −' + MARK_SHRED + ' armor and MR this round');
       if (u.guardedBy) live.push('Guarded by Warden');
-      if (u.bonusAd || u.bonusAp) live.push('This round: AD ' + adOf(u) + ' · AP ' + apOf(u));
       if (ins.card.bonusAd) live.push('Permanent: +' + ins.card.bonusAd + ' AD for the game');
+      if (ins.card.bonusAp) live.push('Permanent: +' + ins.card.bonusAp + ' AP for the game');
       if (ins.card.bonusArmor) live.push('Permanent: +' + ins.card.bonusArmor + ' armor for the game');
       var icd = cooldownOf(ins.side, ins.slot);
       live.push(isFinite(icd) ? 'Acts every ' + icd + ' ticks' : 'Only counterattacks in this slot');

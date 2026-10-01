@@ -12,28 +12,28 @@ var TICKS_PER_SECOND = 10;
 
 var CARD_DEFS = {
   striker:   { key:'striker',   name:'Striker',   icon:'⚔', role:'attacker', hp:20, ad:10, ap:0,  armor:20, mr:10, as:0.5,
-    effect:'Its ability depends on its position.',
+    effect:'Its ability depends on where it stands: front, middle or back.',
     positions:[
       { name:'Heavy attack', short:'HEAVY', text:'Hits a random enemy for 150% of its AD.' },
       { name:'Buff itself',  short:'RAMP',  text:'Permanently gains +5 AD (kept for the rest of the game), then attacks.' },
       { name:'Execute',      short:'EXECUTE', text:'Hits the most damaged enemy (lowest HP %) for its AD. If no enemy is damaged yet, hits the front line.' }
     ] },
   medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:15, ad:0,  ap:10, armor:10, mr:25, as:0.5,
-    effect:'Its ability depends on its position.',
+    effect:'Its ability depends on where it stands: front, middle or back.',
     positions:[
-      { name:'AP buff', short:'+AP', text:'Gives every unit on your side +5 AP for the rest of the round. Stacks — powers up a healing Medic in position 3.' },
-      { name:'AD buff', short:'+AD', text:'Gives every unit on your side +3 AD for the rest of the round. Stacks.' },
-      { name:'Heal',    short:'HEAL',    text:'Heals your weakest ally (by HP %) for its AP. Boosted by AP buffs.' }
+      { name:'AP buff', short:'+AP', text:'Gives every friendly on-field unit +5 AP permanently.' },
+      { name:'AD buff', short:'+AD', text:'Gives every friendly on-field unit +3 AD permanently.' },
+      { name:'Heal',    short:'HEAL',    text:'Heals your weakest ally for 100% AP.' }
     ] },
   predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:18, ad:16, ap:0,  armor:15, mr:10, as:0.5,
-    effect:'Its ability depends on its position.',
+    effect:'Its ability depends on where it stands: front, middle or back.',
     positions:[
       { name:'Mark',   short:'MARK',   text:'Marks the most dangerous unmarked enemy (highest AD or AP). Marked units lose 10 armor and 10 MR for the rest of the round.' },
       { name:'Hunt',   short:'HUNT',   text:'Attacks a marked enemy wherever it stands. With no mark on the board, attacks the front line.' },
       { name:'Trophy', short:'TROPHY', text:'Attacks the front line. Every kill permanently gives this card +2 AD for the rest of the game.' }
     ] },
   warden:      { key:'warden',      name:'Warden',      icon:'⛉', role:'support',  hp:20, ad:6,  ap:0,  armor:30, mr:30, as:0.5,
-    effect:'Its ability depends on its position.',
+    effect:'Its ability depends on where it stands: front, middle or back.',
     positions:[
       { name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor permanently (kept for the rest of the game). Stacks.' },
       { name:'Guard',   short:'GUARD',   text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
@@ -49,6 +49,8 @@ Object.keys(CARD_DEFS).forEach(function(k){
 var DECK_SIZE = 9;   // every deck is exactly this many cards
 var DEFAULT_RECIPE = { striker:3, medic:2, predator:2, warden:2 };
 var MAX_COPIES = 6;
+// The three board slots, left to right. Front is where attacks land by default.
+var SLOT_NAMES = ['Front', 'Middle', 'Back'];
 var ROUND_PICKS = 3;   // each round you field units from the top 3 cards of your deck
 var DECK_STORAGE_KEY = 'fd7-deck-recipes';
 
@@ -63,24 +65,24 @@ function roleLabel(card){
   return { attacker:'Attacker', healer:'Healer', support:'Support' }[card.role];
 }
 
-// ['HP 20', 'AD 10', 'AP 0', 'ARM 20', 'MR 10', 'AS 0.50']. AD and ARM include permanent bonuses earned in play.
+// ['HP 20', 'AD 10', 'AP 0', 'ARM 20', 'MR 10', 'AS 0.50']. AD, AP and ARM include permanent bonuses earned in play.
 function statList(card){
-  return ['HP ' + card.hp, 'AD ' + (card.ad + (card.bonusAd || 0)), 'AP ' + card.ap, 'ARM ' + (card.armor + (card.bonusArmor || 0)), 'MR ' + card.mr,
+  return ['HP ' + card.hp, 'AD ' + (card.ad + (card.bonusAd || 0)), 'AP ' + (card.ap + (card.bonusAp || 0)), 'ARM ' + (card.armor + (card.bonusArmor || 0)), 'MR ' + card.mr,
           'AS ' + (card.as > 0 ? card.as.toFixed(2) : '—')];
 }
 
-// Title, stat pills and effect text for a "Card Info" panel. For positional units, lists all three abilities and
-// highlights the one for activeSlot (0–2) when the card is on the board.
+// Title, stat pills and effect text for a "Card Info" panel. Lists the front/middle/back abilities and highlights
+// the one for activeSlot (0–2) when the card is on the board.
 function cardInfoHtml(card, activeSlot){
   var effect = card.positions
     ? '<div class="pos-list">' + card.positions.map(function(pos, i){
-        return '<div class="pos-item' + (i === activeSlot ? ' active' : '') + '"><span class="pos-num mono">' + (i + 1) + '</span>' +
+        return '<div class="pos-item' + (i === activeSlot ? ' active' : '') + '"><span class="pos-name">' + SLOT_NAMES[i] + '</span>' +
           '<div><b>' + pos.name + '</b> — ' + pos.text + '</div></div>';
       }).join('') + '</div>'
     : '<div class="inspector-effect">' + card.effect + '</div>';
   return '<div class="inspector-title"><div class="inspector-icon">' + card.icon + '</div>' +
     '<div><div class="inspector-name">' + card.name + '</div><div class="inspector-role">' + roleLabel(card) +
-    (card.positions ? ' · ability by position' : '') + '</div></div></div>' +
+    (card.positions ? ' · ability by slot' : '') + '</div></div></div>' +
     '<div class="inspector-stats">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
     effect;
 }
