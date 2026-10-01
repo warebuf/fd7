@@ -32,12 +32,12 @@ var CARD_DEFS = {
       { name:'No ability', short:'—', acts:false, text:'No ability.' },
       { name:'Trophy', short:'TROPHY', text:'Attacks the front line. Every kill permanently gives this card +2 AD for the rest of the game.' }
     ] },
-  warden:      { key:'warden',      name:'Warden',      icon:'⛉', role:'support',  hp:20, ad:6,  ap:0,  armor:30, mr:30, as:0.5,
+  warden:      { key:'warden',      name:'Warden',      icon:'⛉', role:'support',  hp:20, ad:0,  ap:0,  armor:30, mr:30, as:0.5,
     effect:'Its ability depends on where it stands: front, middle or back.',
     positions:[
-      { name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor permanently (kept for the rest of the game). Stacks.' },
       { name:'Guard',   short:'GUARD',   text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
-      { name:'Counter', short:'COUNTER', acts:false, text:'Never acts on its own. Whenever an enemy attack hits Warden, it strikes the attacker back for its AD.' }
+      { name:'Guard',   short:'GUARD',   text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
+      { name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor permanently (kept for the rest of the game). Stacks.' }
     ] },
   saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:16, ad:0,  ap:0,  armor:15, mr:15, as:0.5,
     effect:'Its ability depends on where it stands: front, middle or back.',

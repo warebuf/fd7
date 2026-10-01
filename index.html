@@ -442,6 +442,19 @@
     addLog('t' + state.tick + ': ' + state.players[side].name + "'s " + u.card.name + ' ' + text, type || 'meta');
   }
 
+  // Warden's Guard: attacks aimed at the weakest other ally hit Warden instead, until Warden acts again.
+  function wardenGuard(side, slot, u){
+    var p = state.players[side], best = -1, bestPct = Infinity;
+    p.units.forEach(function(a, i){
+      if (a && a.guardedBy === u) a.guardedBy = null;
+      if (a && a !== u && a.hp / a.maxHp < bestPct){ bestPct = a.hp / a.maxHp; best = i; }
+    });
+    if (best === -1){ say(side, u, 'has no ally to guard.', 'idle'); return; }
+    p.units[best].guardedBy = u;
+    state.fx.healed.push(p.units[best]);
+    say(side, u, 'guards ' + p.units[best].card.name + ': attacks aimed at it hit Warden instead.', 'meta');
+  }
+
   var POSITION_ACTIONS = {
     striker: [
       // 1 · Heavy attack on a random enemy
@@ -531,28 +544,17 @@
       }
     ],
     warden: [
-      // 1 · Give the team armor
+      // Front and Middle · Guard the weakest other ally until Warden acts again
+      wardenGuard,
+      wardenGuard,
+      // Back · Fortify: every unit on the side gets permanent armor
       function(side, slot, u){
         state.players[side].units.forEach(function(a){ if (a){ a.card.bonusArmor = (a.card.bonusArmor || 0) + FORTIFY_ARMOR; state.fx.healed.push(a); } });
         say(side, u, 'fortifies: +' + FORTIFY_ARMOR + ' armor for the rest of the game to every unit on its side.', 'heal');
-      },
-      // 2 · Guard the weakest other ally until Warden acts again
-      function(side, slot, u){
-        var p = state.players[side], best = -1, bestPct = Infinity;
-        p.units.forEach(function(a, i){
-          if (a && a.guardedBy === u) a.guardedBy = null;
-          if (a && a !== u && a.hp / a.maxHp < bestPct){ bestPct = a.hp / a.maxHp; best = i; }
-        });
-        if (best === -1){ say(side, u, 'has no ally to guard.', 'idle'); return; }
-        p.units[best].guardedBy = u;
-        state.fx.healed.push(p.units[best]);
-        say(side, u, 'guards ' + p.units[best].card.name + ': attacks aimed at it hit Warden instead.', 'meta');
-      },
-      // 3 · Counterattack — passive (see strike); a Warden in the back slot never acts on its own
-      function(){}
+      }
     ]
   };
-  // Does this unit act on its own in this slot? (Position-3 Warden only counterattacks.)
+  // Does this unit act on its own in this slot? (Slots marked acts:false — "No ability" — never do.)
   function actsInSlot(card, slot){ return !(card.positions && card.positions[slot].acts === false); }
 
   // Who does an attack on dp hit? The front line (left-most unit) by default, or a specific slot.
@@ -567,8 +569,8 @@
     if (target) strike(side, slot, u, 1 - side, target, amount, 'physical', { what: what, onKill: onKill });
   }
 
-  // One unit hitting one enemy, with everything that hangs off a hit: Warden's Guard redirect, damage
-  // (marks apply inside dealDamage), kill bonuses and Warden's counterattack.
+  // One unit hitting one enemy, with everything that hangs off a hit: Warden's Guard redirect, damage and
+  // kill bonuses.
   function strike(side, slot, u, dSide, target, amount, type, opts){
     opts = opts || {};
     var dp = state.players[dSide];
@@ -583,13 +585,7 @@
       } else victim.guardedBy = null;
     }
     var dealt = dealDamage(dSide, tSlot, amount, type, label);
-    var killed = dp.units[tSlot] !== victim;
-    var attackerAlive = state.players[side].units[slot] === u;
-    if (killed && opts.onKill) opts.onKill(victim);
-    // Warden in the back slot strikes back at whoever hit it
-    if (!killed && attackerAlive && victim.card.key === 'warden' && tSlot === 2){
-      dealDamage(side, slot, adOf(victim), 'physical', dp.name + "'s Warden (counterattack)");
-    }
+    if (dp.units[tSlot] !== victim && opts.onKill) opts.onKill(victim);
     return dealt;
   }
 
