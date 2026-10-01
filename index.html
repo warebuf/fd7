@@ -259,7 +259,7 @@
     }
     if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.pos, slot);
   }
-  function newUnit(card){ return { card: card, hp: card.hp, maxHp: card.hp }; }
+  function newUnit(card){ var hp = card.hp + (card.bonusHp || 0); return { card: card, hp: hp, maxHp: hp }; }
   // At the start of every round each player's top picks are placed automatically, in deck order, into
   // the front, middle and back slots. Players can still rearrange them before the battle.
   function autoPlace(){
@@ -295,12 +295,21 @@
   function logTurnOrder(){
     addLog('Turn order: ' + state.players[oddSide()].name + ' acts #1, #3, #5 and ' + state.players[1 - oddSide()].name + ' #2, #4, #6 on shared ticks.', 'meta');
   }
+  // A unit acts every `cd` ticks. Each Saboteur delay pushes that whole schedule back (u.delay ticks in total).
+  function isDue(u, t, cd){ var e = t - (u.delay || 0); return e > 0 && e % cd === 0; }
+  function chargeAt(u, t, cd){ var e = t - (u.delay || 0); return e <= 0 ? 0 : (e % cd) / cd; }
+  // The tick of u's next action: now, if it is still queued on this tick.
+  function nextActionTick(side, slot, u, cd){
+    if (state.queue.some(function(q){ return q.side === side && q.slot === slot; })) return state.tick;
+    var e = state.tick - (u.delay || 0);
+    return (u.delay || 0) + (e <= 0 ? 1 : Math.floor(e / cd) + 1) * cd;
+  }
   function actorsAt(t){
     var order = [];
     [0, 1].forEach(function(side){
       state.players[side].units.forEach(function(u, slot){
         var cd = u ? cooldownOf(side, slot) : Infinity;
-        if (isFinite(cd) && t % cd === 0) order.push({ side: side, slot: slot, tick: t, prio: priority(side, slot) });
+        if (isFinite(cd) && isDue(u, t, cd)) order.push({ side: side, slot: slot, tick: t, prio: priority(side, slot) });
       });
     });
     return order.sort(function(a, b){ return a.prio - b.prio; });
@@ -314,7 +323,7 @@
   }
   function mrOf(side, slot){
     var u = state.players[side].units[slot];
-    return Math.max(0, u.card.mr - (u.marked ? MARK_SHRED : 0));
+    return Math.max(0, u.card.mr + (u.card.bonusMr || 0) - (u.marked ? MARK_SHRED : 0));
   }
   function cooldownOf(side, slot){
     if (!actsInSlot(state.players[side].units[slot].card, slot)) return Infinity;
@@ -406,7 +415,7 @@
       var side = +parts[0], slot = +parts[1];
       if (!state.players[side].units[slot]) return;
       var cd = cooldownOf(side, slot);
-      var pct = isFinite(cd) ? (t % cd) / cd : 0;
+      var pct = isFinite(cd) ? chargeAt(state.players[side].units[slot], t, cd) : 0;
       fill.style.width = (pct * 100) + '%';
       fill.parentNode.classList.toggle('full', pct > .85);
     });
@@ -416,15 +425,24 @@
 
   // ---------- Actions ----------
   // Every unit does something different in each board slot — see POSITION_ACTIONS.
-  var MEDIC_AP_BUFF = 5, MEDIC_AD_BUFF = 3, MARK_SHRED = 10, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5;
+  var MEDIC_AP_BUFF = 5, MEDIC_AD_BUFF = 3, MARK_SHRED = 10, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5, SABOTAGE_DELAY = 5, STEAL_AMOUNT = 3;
 
   // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
   function adOf(u){ return u.card.ad + (u.card.bonusAd || 0); }
   function apOf(u){ return u.card.ap + (u.card.bonusAp || 0); }
 
   function act(side, slot, u){
+    u.delayed = 0;
     return POSITION_ACTIONS[u.card.key][slot](side, slot, u);
   }
+
+  // Stats a Saboteur can steal, and the card field each permanent bonus lives in.
+  var STEALABLE = [
+    { key: 'hp', field: 'bonusHp', label: 'HP' }, { key: 'ad', field: 'bonusAd', label: 'AD' },
+    { key: 'ap', field: 'bonusAp', label: 'AP' }, { key: 'armor', field: 'bonusArmor', label: 'armor' },
+    { key: 'mr', field: 'bonusMr', label: 'MR' }
+  ];
+  function statValue(card, st){ return card[st.key] + (card[st.field] || 0); }
 
   // Every unit on the side (the buffer included) permanently gains `amount` of a stat, stored on its card. Stacks.
   function buffTeam(side, u, field, amount, statName){
@@ -497,6 +515,49 @@
           u.card.bonusAd = (u.card.bonusAd || 0) + TROPHY_AD;
           say(side, u, 'claims a trophy: +' + TROPHY_AD + ' AD for the rest of the game (now ' + adOf(u) + ').', 'heal');
         });
+      }
+    ],
+    saboteur: [
+      // Front · Sabotage: push back the next enemy action
+      function(side, slot, u){
+        var dSide = 1 - side, dp = state.players[dSide], best = -1, bestAt = Infinity, bestPrio = Infinity;
+        dp.units.forEach(function(e, i){
+          if (!e) return;
+          var cd = cooldownOf(dSide, i);
+          if (!isFinite(cd)) return;
+          var at = nextActionTick(dSide, i, e, cd), prio = priority(dSide, i);
+          if (at < bestAt || (at === bestAt && prio < bestPrio)){ best = i; bestAt = at; bestPrio = prio; }
+        });
+        if (best === -1){ say(side, u, 'has no enemy action to delay.', 'idle'); return; }
+        var target = dp.units[best];
+        state.queue = state.queue.filter(function(q){ return !(q.side === dSide && q.slot === best); });
+        target.delay = (target.delay || 0) + SABOTAGE_DELAY;
+        target.delayed = (target.delayed || 0) + SABOTAGE_DELAY;
+        state.fx.hit.push(target);
+        say(side, u, 'sabotages ' + dp.name + "'s " + target.card.name + ': its next action slips ' + SABOTAGE_DELAY +
+          ' ticks, to t' + nextActionTick(dSide, best, target, cooldownOf(dSide, best)) + '.', 'attack');
+      },
+      // Middle · no ability (never acts)
+      function(){},
+      // Back · Steal STEAL_AMOUNT of a random stat from a random enemy, permanently
+      function(side, slot, u){
+        var dSide = 1 - side, dp = state.players[dSide];
+        var enemies = dp.units.map(function(e, i){ return e ? i : -1; }).filter(function(i){ return i !== -1; });
+        if (!enemies.length) return;
+        var vi = enemies[Math.floor(Math.random() * enemies.length)], victim = dp.units[vi];
+        var options = STEALABLE.filter(function(st){ return statValue(victim.card, st) > 0; });
+        if (!options.length){ say(side, u, 'finds nothing to steal.', 'idle'); return; }
+        var st = options[Math.floor(Math.random() * options.length)];
+        var amount = Math.min(STEAL_AMOUNT, statValue(victim.card, st));
+        victim.card[st.field] = (victim.card[st.field] || 0) - amount;
+        u.card[st.field] = (u.card[st.field] || 0) + amount;
+        if (st.key === 'hp'){
+          victim.maxHp -= amount; victim.hp = Math.min(victim.hp, victim.maxHp);
+          u.maxHp += amount; u.hp += amount;
+        }
+        state.fx.hit.push(victim); state.fx.healed.push(u);
+        say(side, u, 'steals ' + amount + ' ' + st.label + ' from ' + dp.name + "'s " + victim.card.name + ', permanently.', 'attack');
+        if (victim.hp <= 0) killUnit(dSide, vi);
       }
     ],
     warden: [
@@ -666,14 +727,21 @@
     return '<div class="prio mono" title="Turn order #' + n + ' — lower acts first on the same tick">#' + n + '</div>';
   }
 
+  function signed(n){ return (n > 0 ? '+' : '−') + Math.abs(n); }
+  // Permanent stat changes a card has picked up in play (buffs, trophies, steals — stolen stats show negative).
+  function permanentBonuses(card){
+    return [['bonusHp', 'HP', 'HP'], ['bonusAd', 'AD', 'AD'], ['bonusAp', 'AP', 'AP'], ['bonusArmor', 'ARM', 'armor'], ['bonusMr', 'MR', 'MR']]
+      .filter(function(f){ return card[f[0]]; })
+      .map(function(f){ return { amount: card[f[0]], short: f[1], long: f[2] }; });
+  }
+
   // Temporary states worth seeing at a glance.
   function statusLine(u){
     var tags = [];
     if (u.marked) tags.push('MARKED −' + MARK_SHRED + ' ARM/MR');
     if (u.guardedBy) tags.push('GUARDED');
-    if (u.card.bonusAd) tags.push('+' + u.card.bonusAd + ' AD');
-    if (u.card.bonusAp) tags.push('+' + u.card.bonusAp + ' AP');
-    if (u.card.bonusArmor) tags.push('+' + u.card.bonusArmor + ' ARM');
+    if (u.delayed) tags.push('DELAYED +' + u.delayed);
+    permanentBonuses(u.card).forEach(function(b){ tags.push(signed(b.amount) + ' ' + b.short); });
     return tags.length ? '<div class="line status">' + tags.join(' · ') + '</div>' : '';
   }
 
@@ -690,7 +758,7 @@
     var isNext = !!(next && next.side === side && next.slot === slot);
     var hpPct = Math.max(0, u.hp / u.maxHp);
     var cd = cooldownOf(side, slot);
-    var cdPct = state.phase === 'battle' && isFinite(cd) ? (state.tick % cd) / cd : 0;
+    var cdPct = state.phase === 'battle' && isFinite(cd) ? chargeAt(u, state.tick, cd) : 0;
     var arm = armorOf(side, slot), mr = mrOf(side, slot);
     var buffed = arm !== card.armor || cd !== card.cooldown;
     // one animation per tile: being hit wins over being healed, which wins over acting
@@ -712,7 +780,7 @@
   // The stat each role cares about most is highlighted: damage for attackers, heal power for healers.
   var KEY_STAT = { attacker: 'AD', healer: 'AP' };
   function statCells(card){
-    var vals = { HP: card.hp, AD: card.ad + (card.bonusAd || 0), AP: card.ap + (card.bonusAp || 0), ARM: card.armor + (card.bonusArmor || 0), MR: card.mr, AS: card.as };
+    var vals = { HP: card.hp + (card.bonusHp || 0), AD: card.ad + (card.bonusAd || 0), AP: card.ap + (card.bonusAp || 0), ARM: card.armor + (card.bonusArmor || 0), MR: card.mr + (card.bonusMr || 0), AS: card.as };
     return STAT_COLS.map(function(k){
       var v = vals[k];
       var text = k === 'AS' ? (v > 0 ? v.toFixed(2) : '—') : v;
@@ -807,11 +875,10 @@
                   'ARM ' + armorOf(ins.side, ins.slot) + ' · MR ' + mrOf(ins.side, ins.slot)];
       if (u.marked) live.push('Marked: −' + MARK_SHRED + ' armor and MR this round');
       if (u.guardedBy) live.push('Guarded by Warden');
-      if (ins.card.bonusAd) live.push('Permanent: +' + ins.card.bonusAd + ' AD for the game');
-      if (ins.card.bonusAp) live.push('Permanent: +' + ins.card.bonusAp + ' AP for the game');
-      if (ins.card.bonusArmor) live.push('Permanent: +' + ins.card.bonusArmor + ' armor for the game');
+      if (u.delayed) live.push('Delayed ' + u.delayed + ' ticks by a Saboteur');
+      permanentBonuses(ins.card).forEach(function(b){ live.push('Permanent: ' + signed(b.amount) + ' ' + b.long + ' for the game'); });
       var icd = cooldownOf(ins.side, ins.slot);
-      live.push(isFinite(icd) ? 'Acts every ' + icd + ' ticks' : 'Only counterattacks in this slot');
+      live.push(isFinite(icd) ? 'Acts every ' + icd + ' ticks' : 'Does not act on its own in this slot');
       html += '<div class="inspector-live">' + live.join(' · ') + '</div>';
     }
     body.innerHTML = html;

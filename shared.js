@@ -38,6 +38,13 @@ var CARD_DEFS = {
       { name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor permanently (kept for the rest of the game). Stacks.' },
       { name:'Guard',   short:'GUARD',   text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
       { name:'Counter', short:'COUNTER', acts:false, text:'Never acts on its own. Whenever an enemy attack hits Warden, it strikes the attacker back for its AD.' }
+    ] },
+  saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:16, ad:0,  ap:0,  armor:15, mr:15, as:0.5,
+    effect:'Its ability depends on where it stands: front, middle or back.',
+    positions:[
+      { name:'Sabotage',   short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
+      { name:'No ability', short:'—',     acts:false, text:'No ability.' },
+      { name:'Steal',      short:'STEAL', text:'Steals 3 of a random stat from a random enemy, permanently.' }
     ] }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).
@@ -47,7 +54,7 @@ Object.keys(CARD_DEFS).forEach(function(k){
 });
 
 var DECK_SIZE = 9;   // every deck is exactly this many cards
-var DEFAULT_RECIPE = { striker:3, medic:2, predator:2, warden:2 };
+var DEFAULT_RECIPE = { striker:2, medic:2, predator:2, warden:2, saboteur:1 };
 var MAX_COPIES = 6;
 // The three board slots, left to right. Front is where attacks land by default.
 var SLOT_NAMES = ['Front', 'Middle', 'Back'];
@@ -65,9 +72,10 @@ function roleLabel(card){
   return { attacker:'Attacker', healer:'Healer', support:'Support' }[card.role];
 }
 
-// ['HP 20', 'AD 10', 'AP 0', 'ARM 20', 'MR 10', 'AS 0.50']. AD, AP and ARM include permanent bonuses earned in play.
+// ['HP 20', 'AD 10', 'AP 0', 'ARM 20', 'MR 10', 'AS 0.50'], including permanent bonuses (or losses) earned in play.
 function statList(card){
-  return ['HP ' + card.hp, 'AD ' + (card.ad + (card.bonusAd || 0)), 'AP ' + (card.ap + (card.bonusAp || 0)), 'ARM ' + (card.armor + (card.bonusArmor || 0)), 'MR ' + card.mr,
+  return ['HP ' + (card.hp + (card.bonusHp || 0)), 'AD ' + (card.ad + (card.bonusAd || 0)), 'AP ' + (card.ap + (card.bonusAp || 0)),
+          'ARM ' + (card.armor + (card.bonusArmor || 0)), 'MR ' + (card.mr + (card.bonusMr || 0)),
           'AS ' + (card.as > 0 ? card.as.toFixed(2) : '—')];
 }
 
