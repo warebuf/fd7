@@ -258,17 +258,19 @@
     }
     if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.pos, slot);
   }
-  // A placed unit starts with the ability its card used last time, or its first ability.
-  function newUnit(card){
+  // A placed unit starts with the ability its card used last time if it is usable from this slot, otherwise
+  // its first ability that is.
+  function newUnit(card, slot){
     var hp = card.hp + (card.bonusHp || 0);
-    return { card: card, hp: hp, maxHp: hp, ability: findAbility(card, card.lastAbility).id };
+    var last = findAbility(card, card.lastAbility);
+    return { card: card, hp: hp, maxHp: hp, ability: (abilityAllowed(last, slot) ? last : allowedAbilities(card, slot)[0]).id };
   }
   // Abilities can be switched during setup, and in battle whenever it is paused on an action (not while the
   // clock runs). Switching mid-battle resets that unit's charge: its next action is a full cooldown away.
   function canSwitchAbility(){ return state.phase === 'setup' || (state.phase === 'battle' && !clock); }
   function setAbility(side, slot, id){
     var u = state.players[side].units[slot];
-    if (!canSwitchAbility() || !u) return;
+    if (!canSwitchAbility() || !u || !abilityAllowed(findAbility(u.card, id), slot)) return;
     var next = findAbility(u.card, id).id;
     if (state.phase === 'battle' && next !== u.ability){
       u.delay = state.tick;   // the schedule restarts from now, so the charge bar empties
@@ -283,14 +285,14 @@
     render();
   }
   function cycleAbility(side, slot){
-    var u = state.players[side].units[slot], list = u.card.abilities;
+    var u = state.players[side].units[slot], list = allowedAbilities(u.card, slot);
     var i = list.indexOf(findAbility(u.card, u.ability));
     setAbility(side, slot, list[(i + 1) % list.length].id);
   }
   function placeUnit(side, pos, slot){
     var p = state.players[side];
     var card = p.deck[pos];
-    p.units[slot] = newUnit(card);
+    p.units[slot] = newUnit(card, slot);
     state.selected = null;
     state.inspected = { card: card, side: side, slot: slot };
     render();
@@ -694,12 +696,12 @@
   // ---------- Rendering ----------
   var PHASE_LABEL = { setup: 'Setup', battle: 'Battle', roundEnd: 'Round over' };
 
-  // The tile's headline: the ability the unit uses this round — a button that cycles through its abilities
-  // during setup (when it has more than one).
-  function roleLine(card, u){
+  // The tile's headline: the ability the unit uses this round — a button that cycles through the abilities it
+  // can use from this slot, whenever switching is allowed (and there is more than one).
+  function roleLine(card, u, slot){
     var ab = findAbility(card, u.ability);
     var tip = ab.name + ': ' + ab.text;
-    if (canSwitchAbility() && card.abilities.length > 1)
+    if (canSwitchAbility() && allowedAbilities(card, slot).length > 1)
       return '<button class="ability-btn" type="button" title="' + tip + ' — click to switch ability' +
         (state.phase === 'battle' ? ' (resets its charge)' : '') + '">' + ab.short + ' ⇄</button>';
     return '<div class="line hot" title="' + tip + '">' + ab.short + '</div>';
@@ -749,7 +751,7 @@
       tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to take it off the board' : '')
     });
     tile.innerHTML = prioBadge(side, slot) + (isNext ? '<div class="next-tag">NEXT</div>' : '') +
-      '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u) + statusLine(u) +
+      '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u, slot) + statusLine(u) +
       '<div class="line mono' + (buffed ? ' buff' : '') + '" title="Armor and magic resist, including buffs this round">ARM ' + arm + ' · MR ' + mr + '</div>' +
       '<div class="line mono">' + u.hp + '/' + u.maxHp + ' HP</div>' +
       '<div class="bar hp' + (hpPct < .34 ? ' low' : '') + '"><div style="width:' + (hpPct * 100) + '%"></div></div>' +
@@ -842,8 +844,8 @@
     box.className = 'inspector r-' + ins.card.role;
     var u = ins.slot != null ? state.players[ins.side].units[ins.slot] : null;
     var onBoard = !!(u && u.card === ins.card);
-    var pickable = onBoard && canSwitchAbility() && ins.card.abilities.length > 1;
-    var html = cardInfoHtml(ins.card, onBoard ? u.ability : undefined, pickable);
+    var pickable = onBoard && canSwitchAbility() && allowedAbilities(ins.card, ins.slot).length > 1;
+    var html = cardInfoHtml(ins.card, onBoard ? u.ability : undefined, pickable, onBoard ? ins.slot : undefined);
     if (pickable && state.phase === 'battle') html += '<div class="inspector-live">Click an ability to switch — this resets its charge.</div>';
     if (u && u.card === ins.card){
       var live = ['On ' + state.players[ins.side].name + "'s board", SLOT_NAMES[ins.slot] + ' slot', 'Turn order #' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,

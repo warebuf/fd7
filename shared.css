@@ -80,6 +80,9 @@ button:focus-visible, [tabindex]:focus-visible{ outline:2px solid var(--p1); out
 .pos-item.pickable{ cursor:pointer; }
 .pos-item.pickable:hover{ background:var(--panel-2); }
 .pos-item.active{ outline:2px solid var(--text); }
+.pos-item.unavailable{ opacity:.45; }
+.pos-limit{ font-size:.58rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; border:1px solid var(--line);
+  border-radius:999px; padding:0 5px; white-space:nowrap; }
 .inspector-live{ border-top:1px dashed var(--line); padding-top:5px; color:var(--text-dim); font-size:.68rem; line-height:1.35; }
 
 [hidden]{ display:none !important; }

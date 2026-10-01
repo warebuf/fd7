@@ -7,7 +7,8 @@
 //   armor  reduces physical damage, mr (magic resist) reduces magic damage: taken = dmg × 100 / (100 + resist)
 //   as     attack speed — actions per second, one second being TICKS_PER_SECOND ticks (0 = never acts)
 // Every unit has a list of `abilities`; each round its owner picks which one it uses (ids resolve in ABILITIES in
-// index.html). Board slots still matter for targeting (attacks land on the front line) and turn order.
+// index.html). An ability with `slots` can only be used from those board slots (0 front, 1 middle, 2 back).
+// Board slots also matter for targeting (attacks land on the frontmost unit) and turn order.
 var TICKS_PER_SECOND = 10;
 
 var CARD_DEFS = {
@@ -34,7 +35,7 @@ var CARD_DEFS = {
   saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:16, ad:0,  ap:0,  armor:15, mr:15, as:0.5,
     abilities:[
       { id:'sabotage', name:'Sabotage', short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
-      { id:'steal',    name:'Steal',    short:'STEAL', text:'Steals 10% of a random stat from a random enemy, permanently.' }
+      { id:'steal',    name:'Steal',    short:'STEAL', slots:[2], text:'Steals 10% of a random stat from a random enemy, permanently.' }
     ] }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).
@@ -72,13 +73,21 @@ function statList(card){
 function findAbility(card, id){
   return card.abilities.filter(function(a){ return a.id === id; })[0] || card.abilities[0];
 }
+// Can this ability be used from board slot `slot`? (slot undefined = not on the board: no restriction.)
+function abilityAllowed(ab, slot){ return slot == null || !ab.slots || ab.slots.indexOf(slot) !== -1; }
+function allowedAbilities(card, slot){ return card.abilities.filter(function(ab){ return abilityAllowed(ab, slot); }); }
+// "Back only", for abilities restricted to certain slots; '' otherwise.
+function slotRestriction(ab){ return ab.slots ? ab.slots.map(function(i){ return SLOT_NAMES[i]; }).join('/') + ' only' : ''; }
 
 // Title, stat pills and abilities for a "Card Info" panel. activeId highlights the ability the unit is using;
-// pickable makes each ability clickable (data-ability) so it can be switched (setup, or a paused battle).
-function cardInfoHtml(card, activeId, pickable){
+// pickable makes each ability usable from `slot` clickable (data-ability) so it can be switched (setup, or a
+// paused battle). Abilities that can't be used from `slot` are greyed out.
+function cardInfoHtml(card, activeId, pickable, slot){
   var effect = '<div class="pos-list">' + card.abilities.map(function(ab){
-    return '<div class="pos-item' + (ab.id === activeId ? ' active' : '') + (pickable ? ' pickable" data-ability="' + ab.id + '" role="button" tabindex="0' : '') + '">' +
-      '<div><b>' + ab.name + '</b> — ' + ab.text + '</div></div>';
+    var ok = abilityAllowed(ab, slot), limit = slotRestriction(ab);
+    return '<div class="pos-item' + (ab.id === activeId ? ' active' : '') + (ok ? '' : ' unavailable') +
+      (pickable && ok ? ' pickable" data-ability="' + ab.id + '" role="button" tabindex="0' : '') + '">' +
+      '<div><b>' + ab.name + '</b>' + (limit ? ' <span class="pos-limit">' + limit + '</span>' : '') + ' — ' + ab.text + '</div></div>';
   }).join('') + '</div>';
   var count = card.abilities.length;
   return '<div class="inspector-title"><div class="inspector-icon">' + card.icon + '</div>' +
