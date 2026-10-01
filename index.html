@@ -305,14 +305,13 @@
   }
 
   // ---------- Effective stats (base stats plus this round's buffs) ----------
-  // A Predator's mark strips MARK_SHRED armor and MR for the rest of the round (never below 0).
   function armorOf(side, slot){
     var u = state.players[side].units[slot];
-    return Math.max(0, u.card.armor + (u.card.bonusArmor || 0) - (u.marked ? MARK_SHRED : 0));
+    return Math.max(0, u.card.armor + (u.card.bonusArmor || 0));
   }
   function mrOf(side, slot){
     var u = state.players[side].units[slot];
-    return Math.max(0, u.card.mr + (u.card.bonusMr || 0) - (u.marked ? MARK_SHRED : 0));
+    return Math.max(0, u.card.mr + (u.card.bonusMr || 0));
   }
   function cooldownOf(side, slot){
     if (!actsInSlot(state.players[side].units[slot].card, slot)) return Infinity;
@@ -414,7 +413,7 @@
 
   // ---------- Actions ----------
   // Every unit does something different in each board slot — see POSITION_ACTIONS.
-  var MEDIC_AP_BUFF = 5, MEDIC_AD_BUFF = 3, MARK_SHRED = 10, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5, SABOTAGE_DELAY = 5, STEAL_AMOUNT = 3;
+  var MEDIC_AP_BUFF = 5, MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5, SABOTAGE_DELAY = 5, STEAL_AMOUNT = 3;
 
   // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
   function adOf(u){ return u.card.ad + (u.card.bonusAd || 0); }
@@ -477,27 +476,9 @@
       function(side, slot, u){ healWeakest(side, u, apOf(u)); }
     ],
     predator: [
-      // 1 · Mark the most dangerous unmarked enemy
-      function(side, slot, u){
-        var dp = state.players[1 - side], best = -1, bestPow = -1;
-        dp.units.forEach(function(e, i){
-          if (!e || e.marked) return;
-          var pow = Math.max(adOf(e), apOf(e));
-          if (pow > bestPow){ bestPow = pow; best = i; }
-        });
-        if (best === -1){ say(side, u, 'has no unmarked enemy to mark.', 'idle'); return; }
-        var e = dp.units[best];
-        e.marked = true;
-        state.fx.hit.push(e);
-        say(side, u, 'marks ' + dp.name + "'s " + e.card.name + ' — −' + MARK_SHRED + ' armor and MR for the round.', 'attack');
-      },
-      // 2 · Attack the marked enemy
-      function(side, slot, u){
-        var dp = state.players[1 - side], marked = -1;
-        dp.units.forEach(function(e, i){ if (e && e.marked && marked === -1) marked = i; });
-        var target = chooseTarget(dp, marked === -1 ? null : marked);
-        if (target) strike(side, slot, u, 1 - side, target, Math.round(adOf(u)), 'physical', { what: marked === -1 ? '' : 'hunt' });
-      },
+      // Front and Middle · no ability (never acts)
+      function(){},
+      function(){},
       // 3 · Kill bonus: every kill permanently grows this card
       function(side, slot, u){
         frontStrike(side, slot, u, Math.round(adOf(u)), '', function(){
@@ -626,7 +607,7 @@
     u.hp -= dealt;
     state.fx.hit.push(u);
     var note = dealt === amount ? '' : ' (' + amount + ' ' + type + ', ' + (type === 'physical' ? 'armor' : 'MR') + ' blocked ' + (amount - dealt) + ')';
-    addLog('t' + state.tick + ': ' + label + ' hits ' + p.name + "'s " + u.card.name + (u.marked ? ' (marked)' : '') + ' for ' + dealt + note + '.', 'attack');
+    addLog('t' + state.tick + ': ' + label + ' hits ' + p.name + "'s " + u.card.name + ' for ' + dealt + note + '.', 'attack');
     if (u.hp <= 0) killUnit(side, slot);
     return dealt;
   }
@@ -725,7 +706,6 @@
   // Temporary states worth seeing at a glance.
   function statusLine(u){
     var tags = [];
-    if (u.marked) tags.push('MARKED −' + MARK_SHRED + ' ARM/MR');
     if (u.guardedBy) tags.push('GUARDED');
     if (u.delayed) tags.push('DELAYED +' + u.delayed);
     permanentBonuses(u.card).forEach(function(b){ tags.push(signed(b.amount) + ' ' + b.short); });
@@ -848,7 +828,6 @@
     if (u && u.card === ins.card){
       var live = ['On ' + state.players[ins.side].name + "'s board", SLOT_NAMES[ins.slot] + ' slot', 'Turn order #' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,
                   'ARM ' + armorOf(ins.side, ins.slot) + ' · MR ' + mrOf(ins.side, ins.slot)];
-      if (u.marked) live.push('Marked: −' + MARK_SHRED + ' armor and MR this round');
       if (u.guardedBy) live.push('Guarded by Warden');
       if (u.delayed) live.push('Delayed ' + u.delayed + ' ticks by a Saboteur');
       permanentBonuses(ins.card).forEach(function(b){ live.push('Permanent: ' + signed(b.amount) + ' ' + b.long + ' for the game'); });

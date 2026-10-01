@@ -28,8 +28,8 @@ var CARD_DEFS = {
   predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:18, ad:16, ap:0,  armor:15, mr:10, as:0.5,
     effect:'Its ability depends on where it stands: front, middle or back.',
     positions:[
-      { name:'Mark',   short:'MARK',   text:'Marks the most dangerous unmarked enemy (highest AD or AP). Marked units lose 10 armor and 10 MR for the rest of the round.' },
-      { name:'Hunt',   short:'HUNT',   text:'Attacks a marked enemy wherever it stands. With no mark on the board, attacks the front line.' },
+      { name:'No ability', short:'—', acts:false, text:'No ability.' },
+      { name:'No ability', short:'—', acts:false, text:'No ability.' },
       { name:'Trophy', short:'TROPHY', text:'Attacks the front line. Every kill permanently gives this card +2 AD for the rest of the game.' }
     ] },
   warden:      { key:'warden',      name:'Warden',      icon:'⛉', role:'support',  hp:20, ad:6,  ap:0,  armor:30, mr:30, as:0.5,
