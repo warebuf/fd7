@@ -218,8 +218,9 @@
       inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
       players: [newPlayer('Player 1', recipes[0]), newPlayer('Player 2', recipes[1])]
     };
-    addLog('Round 1: each player fields units from the top ' + ROUND_PICKS + ' cards of their deck, then start the battle.', 'meta');
+    addLog('Round 1: each player\'s top ' + ROUND_PICKS + ' cards are placed on the board. Rearrange them if you like, then start the battle.', 'meta');
     logTurnOrder();
+    autoPlace();
     render();
   }
 
@@ -260,10 +261,18 @@
     }
     if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.pos, slot);
   }
+  function newUnit(card){ return { card: card, hp: card.hp, maxHp: card.hp, taunting: false }; }
+  // At the start of every round each player's top picks are placed automatically, in deck order, into
+  // slots 1–3. Players can still rearrange them before the battle.
+  function autoPlace(){
+    state.players.forEach(function(p){
+      for (var pos = 0; pos < pickCount(p); pos++) p.units[pos] = newUnit(p.deck[pos]);
+    });
+  }
   function placeUnit(side, pos, slot){
     var p = state.players[side];
     var card = p.deck[pos];
-    p.units[slot] = { card: card, hp: card.hp, maxHp: card.hp, taunting: false };
+    p.units[slot] = newUnit(card);
     state.selected = null;
     state.inspected = { card: card, side: side, slot: slot };
     render();
@@ -566,8 +575,9 @@
     clearFx();
     state.phase = 'setup';
     state.inspected = null;
-    addLog('Round ' + state.round + ': the board clears and last round\'s picks go to each discard pile.', 'meta');
+    addLog('Round ' + state.round + ': last round\'s picks go to each discard pile and the new top cards are placed.', 'meta');
     logTurnOrder();
+    autoPlace();
     render();
   }
 
@@ -750,7 +760,7 @@
     var body = document.getElementById('actionBody');
     var sp = state.spotlight;
     panel.className = 'action-panel' + (sp && sp.side != null ? ' p' + (sp.side + 1) : '');
-    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Place your units, then start the battle.</div>'; return; }
+    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Your top cards are placed. Rearrange them if you like, then start the battle.</div>'; return; }
     if (clock){ body.innerHTML = '<div class="action-wait">Simming… waiting for the next unit to act.</div>'; return; }
     body.innerHTML = '';
     if (!sp) return;

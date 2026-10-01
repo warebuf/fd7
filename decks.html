@@ -102,6 +102,7 @@
   }
   function change(key, delta){
     var r = recipes[side];
+    if (delta > 0 && deckTotal(r) >= DECK_SIZE) return;
     r[key] = Math.max(0, Math.min(MAX_COPIES, r[key] + delta));
     render();
   }
@@ -121,7 +122,7 @@
       '<b class="mono">' + qty + '</b><button class="btn" type="button" aria-label="Add one ' + card.name + '">+</button></div>';
     var btns = row.querySelectorAll('button');
     btns[0].disabled = qty <= 0;
-    btns[1].disabled = qty >= MAX_COPIES;
+    btns[1].disabled = qty >= MAX_COPIES || deckTotal(recipes[side]) >= DECK_SIZE;
     btns[0].addEventListener('click', function(){ change(key, -1); });
     btns[1].addEventListener('click', function(){ change(key, 1); });
     row.addEventListener('mouseenter', function(){ inspect(key); });
@@ -137,8 +138,8 @@
 
     var recipe = recipes[side], total = deckTotal(recipe);
     var summary = document.getElementById('deckSummary');
-    summary.textContent = total + ' cards' + (total < ROUND_PICKS ? ' · needs at least ' + ROUND_PICKS + ' to fill a round' : '');
-    summary.className = 'deck-summary mono' + (total < ROUND_PICKS ? ' warn' : '');
+    summary.textContent = total + ' / ' + DECK_SIZE + ' cards' + (total < DECK_SIZE ? ' · add ' + (DECK_SIZE - total) + ' more' : '');
+    summary.className = 'deck-summary mono' + (total !== DECK_SIZE ? ' warn' : '');
     var list = document.getElementById('deckList');
     list.innerHTML = '';
     var keys = Object.keys(CARD_DEFS).filter(function(k){ return recipe[k] > 0; });
@@ -152,8 +153,8 @@
   document.getElementById('deckDefault').addEventListener('click', function(){ recipes[side] = defaultRecipe(); render(); });
   document.getElementById('deckClear').addEventListener('click', function(){ recipes[side] = emptyRecipe(); render(); });
   document.getElementById('deckApply').addEventListener('click', function(){
-    if (recipes.some(function(r){ return deckTotal(r) < ROUND_PICKS; })){
-      alert('Each deck needs at least ' + ROUND_PICKS + ' cards to fill a round.');
+    if (recipes.some(function(r){ return deckTotal(r) !== DECK_SIZE; })){
+      alert('Each deck must be exactly ' + DECK_SIZE + ' cards.');
       return;
     }
     saveDeckRecipes(recipes);

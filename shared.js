@@ -58,8 +58,8 @@ Object.keys(CARD_DEFS).forEach(function(k){
   c.cooldown = c.as > 0 ? Math.round(TICKS_PER_SECOND / c.as) : Infinity;
 });
 
-var DEFAULT_RECIPE = { striker:2, medic:2, predator:2, bodyguard:1, bulwark:1, arcanist:2, stormcaller:1, shade:2, duelist:2,
-                       marksman:1, leech:1, phoenix:1, veteran:1, drummer:1, warden:1 };
+var DECK_SIZE = 9;   // every deck is exactly this many cards
+var DEFAULT_RECIPE = { striker:1, medic:1, bodyguard:1, arcanist:1, shade:1, duelist:1, marksman:1, drummer:1, warden:1 };
 var MAX_COPIES = 6;
 var ROUND_PICKS = 3;   // each round you field units from the top 3 cards of your deck
 var DECK_STORAGE_KEY = 'fd7-deck-recipes';
@@ -113,7 +113,11 @@ function sanitizeRecipe(saved){
 function loadDeckRecipes(){
   try {
     var parsed = JSON.parse(localStorage.getItem(DECK_STORAGE_KEY));
-    if (Array.isArray(parsed) && parsed.length === 2) return [sanitizeRecipe(parsed[0]), sanitizeRecipe(parsed[1])];
+    // a saved deck that isn't exactly DECK_SIZE cards (e.g. from before the size rule) falls back to the default
+    if (Array.isArray(parsed) && parsed.length === 2) return parsed.map(function(saved){
+      var r = sanitizeRecipe(saved);
+      return deckTotal(r) === DECK_SIZE ? r : defaultRecipe();
+    });
   } catch (e){}
   return [defaultRecipe(), defaultRecipe()];
 }
