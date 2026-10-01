@@ -15,8 +15,8 @@ var CARD_DEFS = {
     effect:'Its ability depends on where it stands: front, middle or back.',
     positions:[
       { name:'Heavy attack', short:'HEAVY', text:'Hits a random enemy for 150% of its AD.' },
-      { name:'Buff itself',  short:'RAMP',  text:'Permanently gains +5 AD (kept for the rest of the game), then attacks.' },
-      { name:'Execute',      short:'EXECUTE', text:'Hits the most damaged enemy (lowest HP %) for its AD. If no enemy is damaged yet, hits the front line.' }
+      { name:'Buff itself',  short:'RAMP',  text:'Permanently gains +5 AD.' },
+      { name:'Execute',      short:'EXECUTE', text:'Attack the most damaged enemy (lowest HP %) for 100% AD.' }
     ] },
   medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:15, ad:0,  ap:10, armor:10, mr:25, as:0.5,
     effect:'Its ability depends on where it stands: front, middle or back.',
