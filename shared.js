@@ -44,7 +44,7 @@ var CARD_DEFS = {
     positions:[
       { name:'Sabotage',   short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
       { name:'No ability', short:'—',     acts:false, text:'No ability.' },
-      { name:'Steal',      short:'STEAL', text:'Steals 3 of a random stat from a random enemy, permanently.' }
+      { name:'Steal',      short:'STEAL', text:'Steals 10% of a random stat from a random enemy, permanently.' }
     ] }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).

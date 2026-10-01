@@ -413,7 +413,7 @@
 
   // ---------- Actions ----------
   // Every unit does something different in each board slot — see POSITION_ACTIONS.
-  var MEDIC_AP_BUFF = 5, MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5, SABOTAGE_DELAY = 5, STEAL_AMOUNT = 3;
+  var MEDIC_AP_BUFF = 5, MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
 
   // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
   function adOf(u){ return u.card.ad + (u.card.bonusAd || 0); }
@@ -509,7 +509,7 @@
       },
       // Middle · no ability (never acts)
       function(){},
-      // Back · Steal STEAL_AMOUNT of a random stat from a random enemy, permanently
+      // Back · Steal STEAL_FRACTION (10%, at least 1) of a random stat from a random enemy, permanently
       function(side, slot, u){
         var dSide = 1 - side, dp = state.players[dSide];
         var enemies = dp.units.map(function(e, i){ return e ? i : -1; }).filter(function(i){ return i !== -1; });
@@ -518,7 +518,7 @@
         var options = STEALABLE.filter(function(st){ return statValue(victim.card, st) > 0; });
         if (!options.length){ say(side, u, 'finds nothing to steal.', 'idle'); return; }
         var st = options[Math.floor(Math.random() * options.length)];
-        var amount = Math.min(STEAL_AMOUNT, statValue(victim.card, st));
+        var amount = Math.max(1, Math.round(statValue(victim.card, st) * STEAL_FRACTION));
         victim.card[st.field] = (victim.card[st.field] || 0) - amount;
         u.card[st.field] = (u.card[st.field] || 0) + amount;
         if (st.key === 'hp'){
