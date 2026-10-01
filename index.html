@@ -61,6 +61,11 @@
     border:1px solid var(--line); border-radius:999px; min-width:15px; padding:0 3px; text-align:center; background:var(--panel);
   }
   .line.buff{ color:var(--support); }
+  .ability-btn{
+    font-family:inherit; font-size:.62rem; font-weight:700; letter-spacing:.03em; color:var(--role); cursor:pointer;
+    background:var(--panel); border:1px solid var(--role); border-radius:999px; padding:1px 7px; line-height:1.4;
+  }
+  .ability-btn:hover{ background:var(--side-bg); }
   .tile .line.status{ font-size:.55rem; font-weight:600; letter-spacing:.03em; color:var(--danger); text-align:center; line-height:1.2; }
   .tile .icon{ font-size:1.4rem; line-height:1.1; }
   .tile .name{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.76rem; text-align:center; line-height:1.1; }
@@ -213,7 +218,7 @@
       inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
       players: [newPlayer('Player 1', recipes[0]), newPlayer('Player 2', recipes[1])]
     };
-    addLog('Round 1: each player picks up to ' + UNIT_SLOTS + ' units from their deck, then start the battle.', 'meta');
+    addLog('Round 1: each player picks up to ' + UNIT_SLOTS + ' units from their deck and chooses each one\'s ability, then start the battle.', 'meta');
     logTurnOrder();
     render();
   }
@@ -253,7 +258,25 @@
     }
     if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.pos, slot);
   }
-  function newUnit(card){ var hp = card.hp + (card.bonusHp || 0); return { card: card, hp: hp, maxHp: hp }; }
+  // A placed unit starts with the ability its card used last time, or its first ability.
+  function newUnit(card){
+    var hp = card.hp + (card.bonusHp || 0);
+    return { card: card, hp: hp, maxHp: hp, ability: findAbility(card, card.lastAbility).id };
+  }
+  // During setup, the owner picks which ability each placed unit uses this round.
+  function setAbility(side, slot, id){
+    var u = state.players[side].units[slot];
+    if (state.phase !== 'setup' || !u) return;
+    u.ability = findAbility(u.card, id).id;
+    u.card.lastAbility = u.ability;
+    state.inspected = { card: u.card, side: side, slot: slot };
+    render();
+  }
+  function cycleAbility(side, slot){
+    var u = state.players[side].units[slot], list = u.card.abilities;
+    var i = list.indexOf(findAbility(u.card, u.ability));
+    setAbility(side, slot, list[(i + 1) % list.length].id);
+  }
   function placeUnit(side, pos, slot){
     var p = state.players[side];
     var card = p.deck[pos];
@@ -314,7 +337,6 @@
     return Math.max(0, u.card.mr + (u.card.bonusMr || 0));
   }
   function cooldownOf(side, slot){
-    if (!actsInSlot(state.players[side].units[slot].card, slot)) return Infinity;
     var as = state.players[side].units[slot].card.as;
     return as > 0 ? Math.round(TICKS_PER_SECOND / as) : Infinity;
   }
@@ -412,7 +434,7 @@
   }
 
   // ---------- Actions ----------
-  // Every unit does something different in each board slot — see POSITION_ACTIONS.
+  // Every unit uses the one ability its owner chose for it this round — see ABILITIES.
   var MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
 
   // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
@@ -421,7 +443,7 @@
 
   function act(side, slot, u){
     u.delayed = 0;
-    return POSITION_ACTIONS[u.card.key][slot](side, slot, u);
+    return ABILITIES[u.ability](side, slot, u);
   }
 
   // Stats a Saboteur can steal, and the card field each permanent bonus lives in.
@@ -455,54 +477,43 @@
     say(side, u, 'guards ' + p.units[best].card.name + ': attacks aimed at it hit Warden instead.', 'meta');
   }
 
-  var POSITION_ACTIONS = {
-    striker: [
-      // 1 · Heavy attack on a random enemy
-      function(side, slot, u){
+  // Every ability by id (see each card's `abilities`). Each runs as function(side, slot, u).
+  var ABILITIES = {
+    // Striker · Heavy attack on a random enemy
+    heavy: function(side, slot, u){
         var dp = state.players[1 - side];
         var alive = dp.units.map(function(e, i){ return e ? i : -1; }).filter(function(i){ return i !== -1; });
         if (!alive.length) return;
         var pick = alive[Math.floor(Math.random() * alive.length)];
         strike(side, slot, u, 1 - side, { slot: pick }, Math.round(adOf(u) * HEAVY_MULT), 'physical', { what: 'heavy attack' });
       },
-      // 2 · Buff itself permanently (kept on the card for the rest of the game, like Predator trophies), then attack
-      function(side, slot, u){
+    // Striker · Buff itself permanently (kept on the card for the rest of the game, like Predator trophies), then attack
+    ramp: function(side, slot, u){
         u.card.bonusAd = (u.card.bonusAd || 0) + STRIKER_RAMP_AD;
         state.fx.healed.push(u);
         say(side, u, 'powers up: +' + STRIKER_RAMP_AD + ' AD for the rest of the game (now ' + adOf(u) + ').', 'heal');
         frontStrike(side, slot, u, adOf(u));
       },
-      // 3 · Execute: hit the most damaged enemy (lowest HP %) for its AD; the front line if nobody is damaged yet
-      function(side, slot, u){
+    // Striker · Execute: hit the most damaged enemy (lowest HP %) for its AD; the front line if nobody is damaged yet
+    execute: function(side, slot, u){
         var dp = state.players[1 - side], best = -1, bestPct = 1;
         dp.units.forEach(function(e, i){ if (e && e.hp < e.maxHp && e.hp / e.maxHp < bestPct){ bestPct = e.hp / e.maxHp; best = i; } });
         if (best === -1) return frontStrike(side, slot, u, adOf(u));
         strike(side, slot, u, 1 - side, { slot: best }, adOf(u), 'physical', { what: 'execute' });
-      }
-    ],
-    medic: [
-      // Front · Heal the weakest ally (by HP %) for its AP
-      function(side, slot, u){ healWeakest(side, u, apOf(u)); },
-      // Middle · AD buff for the whole side
-      function(side, slot, u){ buffTeam(side, u, 'bonusAd', MEDIC_AD_BUFF, 'AD'); },
-      // Back · Heal, same as front
-      function(side, slot, u){ healWeakest(side, u, apOf(u)); }
-    ],
-    predator: [
-      // Front and Middle · no ability (never acts)
-      function(){},
-      function(){},
-      // 3 · Kill bonus: every kill permanently grows this card
-      function(side, slot, u){
+      },
+    // Medic · Heal the weakest ally (by HP %) for its AP
+    heal: function(side, slot, u){ healWeakest(side, u, apOf(u)); },
+    // Medic · AD buff for the whole side
+    adbuff: function(side, slot, u){ buffTeam(side, u, 'bonusAd', MEDIC_AD_BUFF, 'AD'); },
+    // Predator · Trophy: every kill permanently grows this card
+    trophy: function(side, slot, u){
         frontStrike(side, slot, u, Math.round(adOf(u)), '', function(){
           u.card.bonusAd = (u.card.bonusAd || 0) + TROPHY_AD;
           say(side, u, 'claims a trophy: +' + TROPHY_AD + ' AD for the rest of the game (now ' + adOf(u) + ').', 'heal');
         });
-      }
-    ],
-    saboteur: [
-      // Front · Sabotage: push back the next enemy action
-      function(side, slot, u){
+      },
+    // Saboteur · Sabotage: push back the next enemy action
+    sabotage: function(side, slot, u){
         var dSide = 1 - side, dp = state.players[dSide], best = -1, bestAt = Infinity, bestPrio = Infinity;
         dp.units.forEach(function(e, i){
           if (!e) return;
@@ -520,10 +531,8 @@
         say(side, u, 'sabotages ' + dp.name + "'s " + target.card.name + ': its next action slips ' + SABOTAGE_DELAY +
           ' ticks, to t' + nextActionTick(dSide, best, target, cooldownOf(dSide, best)) + '.', 'attack');
       },
-      // Middle · no ability (never acts)
-      function(){},
-      // Back · Steal STEAL_FRACTION (10%, at least 1) of a random stat from a random enemy, permanently
-      function(side, slot, u){
+    // Saboteur · Steal STEAL_FRACTION (10%, at least 1) of a random stat from a random enemy, permanently
+    steal: function(side, slot, u){
         var dSide = 1 - side, dp = state.players[dSide];
         var enemies = dp.units.map(function(e, i){ return e ? i : -1; }).filter(function(i){ return i !== -1; });
         if (!enemies.length) return;
@@ -541,21 +550,15 @@
         state.fx.hit.push(victim); state.fx.healed.push(u);
         say(side, u, 'steals ' + amount + ' ' + st.label + ' from ' + dp.name + "'s " + victim.card.name + ', permanently.', 'attack');
         if (victim.hp <= 0) killUnit(dSide, vi);
-      }
-    ],
-    warden: [
-      // Front and Middle · Guard the weakest other ally until Warden acts again
-      wardenGuard,
-      wardenGuard,
-      // Back · Fortify: every unit on the side gets permanent armor
-      function(side, slot, u){
+      },
+    // Warden · Guard the weakest other ally until Warden acts again
+    guard: wardenGuard,
+    // Warden · Fortify: every unit on the side gets permanent armor
+    fortify: function(side, slot, u){
         state.players[side].units.forEach(function(a){ if (a){ a.card.bonusArmor = (a.card.bonusArmor || 0) + FORTIFY_ARMOR; state.fx.healed.push(a); } });
         say(side, u, 'fortifies: +' + FORTIFY_ARMOR + ' armor for the rest of the game to every unit on its side.', 'heal');
       }
-    ]
   };
-  // Does this unit act on its own in this slot? (Slots marked acts:false — "No ability" — never do.)
-  function actsInSlot(card, slot){ return !(card.positions && card.positions[slot].acts === false); }
 
   // Who does an attack on dp hit? The front line (left-most unit) by default, or a specific slot.
   function chooseTarget(dp, prefer){
@@ -680,10 +683,14 @@
   // ---------- Rendering ----------
   var PHASE_LABEL = { setup: 'Setup', battle: 'Battle', roundEnd: 'Round over' };
 
-  // The tile's headline: the unit's ability for the slot it is in.
-  function roleLine(card, u, slot){
-    var pos = card.positions[slot];
-    return '<div class="line hot" title="' + pos.name + ': ' + pos.text + '">' + pos.short + '</div>';
+  // The tile's headline: the ability the unit uses this round — a button that cycles through its abilities
+  // during setup (when it has more than one).
+  function roleLine(card, u){
+    var ab = findAbility(card, u.ability);
+    var tip = ab.name + ': ' + ab.text;
+    if (state.phase === 'setup' && card.abilities.length > 1)
+      return '<button class="ability-btn" type="button" title="' + tip + ' — click to switch ability">' + ab.short + ' ⇄</button>';
+    return '<div class="line hot" title="' + tip + '">' + ab.short + '</div>';
   }
 
   function prioBadge(side, slot){
@@ -730,12 +737,14 @@
       tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to take it off the board' : '')
     });
     tile.innerHTML = prioBadge(side, slot) + (isNext ? '<div class="next-tag">NEXT</div>' : '') +
-      '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u, slot) + statusLine(u) +
+      '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u) + statusLine(u) +
       '<div class="line mono' + (buffed ? ' buff' : '') + '" title="Armor and magic resist, including buffs this round">ARM ' + arm + ' · MR ' + mr + '</div>' +
       '<div class="line mono">' + u.hp + '/' + u.maxHp + ' HP</div>' +
       '<div class="bar hp' + (hpPct < .34 ? ' low' : '') + '"><div style="width:' + (hpPct * 100) + '%"></div></div>' +
       '<div class="bar cd" title="Charge — acts when full"><div data-charge="' + side + '-' + slot + '" style="width:' + (cdPct * 100) + '%"></div></div>';
     tile.addEventListener('click', function(){ onSlotClick(side, slot); });
+    var abBtn = tile.querySelector('.ability-btn');
+    if (abBtn) abBtn.addEventListener('click', function(e){ e.stopPropagation(); cycleAbility(side, slot); });
     return tile;
   }
 
@@ -820,7 +829,8 @@
     }
     box.className = 'inspector r-' + ins.card.role;
     var u = ins.slot != null ? state.players[ins.side].units[ins.slot] : null;
-    var html = cardInfoHtml(ins.card, u && u.card === ins.card ? ins.slot : undefined);
+    var onBoard = !!(u && u.card === ins.card);
+    var html = cardInfoHtml(ins.card, onBoard ? u.ability : undefined, onBoard && state.phase === 'setup' && ins.card.abilities.length > 1);
     if (u && u.card === ins.card){
       var live = ['On ' + state.players[ins.side].name + "'s board", SLOT_NAMES[ins.slot] + ' slot', 'Turn order #' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,
                   'ARM ' + armorOf(ins.side, ins.slot) + ' · MR ' + mrOf(ins.side, ins.slot)];
@@ -832,6 +842,11 @@
       html += '<div class="inspector-live">' + live.join(' · ') + '</div>';
     }
     body.innerHTML = html;
+    body.querySelectorAll('[data-ability]').forEach(function(item){
+      var pick = function(){ setAbility(ins.side, ins.slot, item.getAttribute('data-ability')); };
+      item.addEventListener('click', pick);
+      item.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); pick(); } });
+    });
   }
 
   function renderLog(){
@@ -861,7 +876,7 @@
     var body = document.getElementById('actionBody');
     var sp = state.spotlight;
     panel.className = 'action-panel' + (sp && sp.side != null ? ' p' + (sp.side + 1) : '');
-    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Pick up to 3 units from your deck, then start the battle.</div>'; return; }
+    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Pick up to 3 units from your deck and choose each one\'s ability (⇄ on the card, or in Card Info), then start the battle.</div>'; return; }
     if (clock){ body.innerHTML = '<div class="action-wait">Simming… waiting for the next unit to act.</div>'; return; }
     body.innerHTML = '';
     if (!sp) return;

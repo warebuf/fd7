@@ -6,45 +6,35 @@
 //   ap     ability power — Medic heals for this
 //   armor  reduces physical damage, mr (magic resist) reduces magic damage: taken = dmg × 100 / (100 + resist)
 //   as     attack speed — actions per second, one second being TICKS_PER_SECOND ticks (0 = never acts)
-// Every unit has three abilities, one per board slot (1–3, left to right) — see `positions`, and
-// POSITION_ACTIONS in index.html for how they resolve. acts:false means it never acts on its own in that slot.
+// Every unit has a list of `abilities`; each round its owner picks which one it uses (ids resolve in ABILITIES in
+// index.html). Board slots still matter for targeting (attacks land on the front line) and turn order.
 var TICKS_PER_SECOND = 10;
 
 var CARD_DEFS = {
   striker:   { key:'striker',   name:'Striker',   icon:'⚔', role:'attacker', hp:20, ad:10, ap:0,  armor:20, mr:10, as:0.5,
-    effect:'Its ability depends on where it stands: front, middle or back.',
-    positions:[
-      { name:'Heavy attack', short:'HEAVY', text:'Hits a random enemy for 150% of its AD.' },
-      { name:'Buff itself',  short:'RAMP',  text:'Permanently gains +5 AD.' },
-      { name:'Execute',      short:'EXECUTE', text:'Attack the most damaged enemy (lowest HP %) for 100% AD.' }
+    abilities:[
+      { id:'heavy',   name:'Heavy attack', short:'HEAVY',   text:'Hits a random enemy for 150% of its AD.' },
+      { id:'ramp',    name:'Buff itself',  short:'RAMP',    text:'Permanently gains +5 AD.' },
+      { id:'execute', name:'Execute',      short:'EXECUTE', text:'Attack the most damaged enemy (lowest HP %) for 100% AD.' }
     ] },
   medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:15, ad:0,  ap:10, armor:10, mr:25, as:0.5,
-    effect:'Its ability depends on where it stands: front, middle or back.',
-    positions:[
-      { name:'Heal',    short:'HEAL',    text:'Heals your weakest ally for 100% AP.' },
-      { name:'AD buff', short:'+AD', text:'Gives every friendly on-field unit +3 AD permanently.' },
-      { name:'Heal',    short:'HEAL',    text:'Heals your weakest ally for 100% AP.' }
+    abilities:[
+      { id:'heal',   name:'Heal',    short:'HEAL', text:'Heals your weakest ally for 100% AP.' },
+      { id:'adbuff', name:'AD buff', short:'+AD',  text:'Gives every friendly on-field unit +3 AD permanently.' }
     ] },
   predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:18, ad:16, ap:0,  armor:15, mr:10, as:0.5,
-    effect:'Its ability depends on where it stands: front, middle or back.',
-    positions:[
-      { name:'No ability', short:'—', acts:false, text:'No ability.' },
-      { name:'No ability', short:'—', acts:false, text:'No ability.' },
-      { name:'Trophy', short:'TROPHY', text:'Attacks the front line. Every kill permanently gives this card +2 AD for the rest of the game.' }
+    abilities:[
+      { id:'trophy', name:'Trophy', short:'TROPHY', text:'Attacks the front line. Every kill permanently gives this card +2 AD for the rest of the game.' }
     ] },
-  warden:      { key:'warden',      name:'Warden',      icon:'⛉', role:'support',  hp:20, ad:0,  ap:0,  armor:30, mr:30, as:0.5,
-    effect:'Its ability depends on where it stands: front, middle or back.',
-    positions:[
-      { name:'Guard',   short:'GUARD',   text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
-      { name:'Guard',   short:'GUARD',   text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
-      { name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor permanently (kept for the rest of the game). Stacks.' }
+  warden:    { key:'warden',    name:'Warden',    icon:'⛉', role:'support',  hp:20, ad:0,  ap:0,  armor:30, mr:30, as:0.5,
+    abilities:[
+      { id:'guard',   name:'Guard',   short:'GUARD',   text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
+      { id:'fortify', name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor permanently (kept for the rest of the game). Stacks.' }
     ] },
   saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:16, ad:0,  ap:0,  armor:15, mr:15, as:0.5,
-    effect:'Its ability depends on where it stands: front, middle or back.',
-    positions:[
-      { name:'Sabotage',   short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
-      { name:'No ability', short:'—',     acts:false, text:'No ability.' },
-      { name:'Steal',      short:'STEAL', text:'Steals 10% of a random stat from a random enemy, permanently.' }
+    abilities:[
+      { id:'sabotage', name:'Sabotage', short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
+      { id:'steal',    name:'Steal',    short:'STEAL', text:'Steals 10% of a random stat from a random enemy, permanently.' }
     ] }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).
@@ -79,18 +69,21 @@ function statList(card){
           'AS ' + (card.as > 0 ? card.as.toFixed(2) : '—')];
 }
 
-// Title, stat pills and effect text for a "Card Info" panel. Lists the front/middle/back abilities and highlights
-// the one for activeSlot (0–2) when the card is on the board.
-function cardInfoHtml(card, activeSlot){
-  var effect = card.positions
-    ? '<div class="pos-list">' + card.positions.map(function(pos, i){
-        return '<div class="pos-item' + (i === activeSlot ? ' active' : '') + '"><span class="pos-name">' + SLOT_NAMES[i] + '</span>' +
-          '<div><b>' + pos.name + '</b> — ' + pos.text + '</div></div>';
-      }).join('') + '</div>'
-    : '<div class="inspector-effect">' + card.effect + '</div>';
+function findAbility(card, id){
+  return card.abilities.filter(function(a){ return a.id === id; })[0] || card.abilities[0];
+}
+
+// Title, stat pills and abilities for a "Card Info" panel. activeId highlights the ability the unit is using;
+// pickable makes each ability clickable (data-ability) so it can be chosen during setup.
+function cardInfoHtml(card, activeId, pickable){
+  var effect = '<div class="pos-list">' + card.abilities.map(function(ab){
+    return '<div class="pos-item' + (ab.id === activeId ? ' active' : '') + (pickable ? ' pickable" data-ability="' + ab.id + '" role="button" tabindex="0' : '') + '">' +
+      '<div><b>' + ab.name + '</b> — ' + ab.text + '</div></div>';
+  }).join('') + '</div>';
+  var count = card.abilities.length;
   return '<div class="inspector-title"><div class="inspector-icon">' + card.icon + '</div>' +
     '<div><div class="inspector-name">' + card.name + '</div><div class="inspector-role">' + roleLabel(card) +
-    (card.positions ? ' · ability by slot' : '') + '</div></div></div>' +
+    (count > 1 ? ' · choose 1 of ' + count + ' abilities each round' : '') + '</div></div></div>' +
     '<div class="inspector-stats">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
     effect;
 }

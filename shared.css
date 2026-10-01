@@ -77,9 +77,9 @@ button:focus-visible, [tabindex]:focus-visible{ outline:2px solid var(--p1); out
 .pos-item{ display:flex; gap:6px; line-height:1.3; font-size:.7rem; color:var(--text-dim); padding:3px 5px; border-radius:6px; }
 .pos-item b{ color:var(--text); }
 .pos-item.active{ background:var(--panel-2); color:var(--text); outline:1px solid var(--line); }
-.pos-name{ flex:0 0 46px; font-size:.56rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; text-align:center;
-  border:1px solid var(--line); border-radius:999px; padding:1px 0; align-self:flex-start; }
-.pos-item.active .pos-name{ background:var(--text); color:var(--bg); border-color:var(--text); }
+.pos-item.pickable{ cursor:pointer; }
+.pos-item.pickable:hover{ background:var(--panel-2); }
+.pos-item.active{ outline:2px solid var(--text); }
 .inspector-live{ border-top:1px dashed var(--line); padding-top:5px; color:var(--text-dim); font-size:.68rem; line-height:1.35; }
 
 [hidden]{ display:none !important; }
