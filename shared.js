@@ -58,7 +58,7 @@ var DEFAULT_RECIPE = { striker:2, medic:2, predator:2, warden:2, saboteur:1 };
 var MAX_COPIES = 6;
 // The three board slots, left to right. Front is where attacks land by default.
 var SLOT_NAMES = ['Front', 'Middle', 'Back'];
-var ROUND_PICKS = 3;   // each round you field units from the top 3 cards of your deck
+var ROUND_PICKS = 3;   // once fewer than this many cards are left in a deck, the discard pile returns to it
 var DECK_STORAGE_KEY = 'fd7-deck-recipes';
 
 function el(tag, cls, attrs){

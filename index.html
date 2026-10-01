@@ -189,21 +189,18 @@
     for (var k in def) c[k] = def[k];
     return c;
   }
-  function shuffle(arr){
-    for (var i = arr.length - 1; i > 0; i--){
-      var j = Math.floor(Math.random() * (i + 1));
-      var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-    }
-    return arr;
-  }
   function buildDeck(recipe){
     var deck = [];
     Object.keys(recipe).forEach(function(k){ for (var i = 0; i < recipe[k]; i++) deck.push(makeCard(k)); });
-    return shuffle(deck);
+    return deck;
+  }
+  // The deck has no order: it is the pool of cards you can field from, kept grouped by card type.
+  function sortDeck(cards){
+    var keys = Object.keys(CARD_DEFS);
+    return cards.sort(function(a, b){ return keys.indexOf(a.key) - keys.indexOf(b.key); });
   }
   function newPlayer(name, recipe){
-    // deck[0] is the top card. The deck is only shuffled once, at the start of the game.
-    return { name: name, deck: buildDeck(recipe), discard: [], units: new Array(UNIT_SLOTS).fill(null) };
+    return { name: name, deck: sortDeck(buildDeck(recipe)), discard: [], units: new Array(UNIT_SLOTS).fill(null) };
   }
   function newGame(){
     stopClock();
@@ -212,13 +209,12 @@
       round: 1, phase: 'setup', tick: 0, roundWins: [0, 0], log: [], logSeq: 0, queue: [],
       fx: { acted: [], hit: [], healed: [] },   // units to animate on the next render
       spotlight: null,  // { title, side, fromSeq } — the action panel shows log lines from fromSeq on
-      selected: null,   // { side, pos } of the pick (a top-of-deck card) being placed
+      selected: null,   // { side, pos } of the deck card being placed
       inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
       players: [newPlayer('Player 1', recipes[0]), newPlayer('Player 2', recipes[1])]
     };
-    addLog('Round 1: each player\'s top ' + ROUND_PICKS + ' cards are placed on the board. Rearrange them if you like, then start the battle.', 'meta');
+    addLog('Round 1: each player picks up to ' + UNIT_SLOTS + ' units from their deck, then start the battle.', 'meta');
     logTurnOrder();
-    autoPlace();
     render();
   }
 
@@ -227,15 +223,13 @@
     if (state.log.length > 300) state.log.shift();
   }
 
-  // ---------- Setup phase: fielding this round's picks ----------
-  // Each round the top ROUND_PICKS cards of the deck are the only cards you can field.
-  function pickCount(p){ return Math.min(ROUND_PICKS, p.deck.length); }
+  // ---------- Setup phase: fielding any cards from your deck ----------
   function isOnBoard(p, card){ return p.units.some(function(u){ return u && u.card === card; }); }
 
   function onPickClick(side, pos){
     var p = state.players[side], card = p.deck[pos];
     state.inspected = { card: card, side: side };
-    if (state.phase === 'setup' && pos < pickCount(p) && !isOnBoard(p, card)){
+    if (state.phase === 'setup' && !isOnBoard(p, card)){
       var sel = state.selected;
       state.selected = (sel && sel.side === side && sel.pos === pos) ? null : { side: side, pos: pos };
     }
@@ -243,7 +237,7 @@
   }
   function onPickDoubleClick(side, pos){
     var p = state.players[side];
-    if (state.phase !== 'setup' || pos >= pickCount(p) || isOnBoard(p, p.deck[pos])) return;
+    if (state.phase !== 'setup' || isOnBoard(p, p.deck[pos])) return;
     var slot = p.units.indexOf(null);
     if (slot !== -1) placeUnit(side, pos, slot);
   }
@@ -260,13 +254,6 @@
     if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.pos, slot);
   }
   function newUnit(card){ var hp = card.hp + (card.bonusHp || 0); return { card: card, hp: hp, maxHp: hp }; }
-  // At the start of every round each player's top picks are placed automatically, in deck order, into
-  // the front, middle and back slots. Players can still rearrange them before the battle.
-  function autoPlace(){
-    state.players.forEach(function(p){
-      for (var pos = 0; pos < pickCount(p); pos++) p.units[pos] = newUnit(p.deck[pos]);
-    });
-  }
   function placeUnit(side, pos, slot){
     var p = state.players[side];
     var card = p.deck[pos];
@@ -283,6 +270,8 @@
     state.tick = 0;
     state.queue = [];
     state.selected = null;
+    // the cards fielded this round go to the discard pile afterwards, whether they survive or not
+    state.fielded = state.players.map(function(p){ return p.units.filter(Boolean).map(function(u){ return u.card; }); });
     state.spotlight = { title: 'Battle begins', fromSeq: state.logSeq };
     addLog('Round ' + state.round + ': battle begins.', 'meta');
     if (!checkForWipe()) startClock();   // a side that fielded no units loses on the spot
@@ -685,19 +674,18 @@
     state.phase = 'roundEnd';
     render();
   }
-  // Every round is a fresh fight: the board clears and this round's picks — played or not, alive or dead —
-  // go to the discard pile, so the next cards down become the new top. When fewer than ROUND_PICKS cards are left, the
-  // discard pile is shuffled and slid under them, so there are always a full set of picks.
+  // Every round is a fresh fight: the board clears and the cards each player fielded — alive or dead — go to
+  // their discard pile. Once fewer than ROUND_PICKS cards are left in a deck, the discard pile returns to it.
   function nextRound(){
     if (state.phase !== 'roundEnd') return;
-    state.players.forEach(function(p){
-      var n = pickCount(p);
-      p.discard = p.discard.concat(p.deck.slice(0, n));
-      p.deck = p.deck.slice(n);
+    state.players.forEach(function(p, side){
+      var used = state.fielded[side];
+      p.deck = p.deck.filter(function(c){ return used.indexOf(c) === -1; });
+      p.discard = p.discard.concat(used);
       if (p.deck.length < ROUND_PICKS && p.discard.length){
-        p.deck = p.deck.concat(shuffle(p.discard));
+        p.deck = sortDeck(p.deck.concat(p.discard));
         p.discard = [];
-        addLog(p.name + ' is running low — the discard pile is shuffled back in under the deck.', 'meta');
+        addLog(p.name + ' is running low — the discard pile returns to the deck.', 'meta');
       }
       p.units = new Array(UNIT_SLOTS).fill(null);
     });
@@ -707,9 +695,8 @@
     clearFx();
     state.phase = 'setup';
     state.inspected = null;
-    addLog('Round ' + state.round + ': last round\'s picks go to each discard pile and the new top cards are placed.', 'meta');
+    addLog('Round ' + state.round + ': the units you fielded go to your discard pile. Pick up to ' + UNIT_SLOTS + ' more from your deck.', 'meta');
     logTurnOrder();
-    autoPlace();
     render();
   }
 
@@ -794,25 +781,20 @@
     return head;
   }
 
-  // Every deck card is a numbered row. The top ROUND_PICKS rows are this round's picks: selectable in setup,
-  // faded once they are on the board.
+  // Every card in the deck is a row you can field during setup; it fades once it is on the board.
   function renderDeckRow(side, pos){
     var p = state.players[side], card = p.deck[pos];
-    var isPick = pos < pickCount(p);
-    var placed = isPick && isOnBoard(p, card);
-    var sel = isPick && state.selected && state.selected.side === side && state.selected.pos === pos;
+    var placed = isOnBoard(p, card);
+    var sel = state.selected && state.selected.side === side && state.selected.pos === pos;
     var row = el('div', 'deck-row r-' + card.role + (sel ? ' selected' : '') + (placed ? ' placed' : ''), {
       tabindex: '0', role: 'button',
-      title: card.name + ' — card ' + (pos + 1) + ' from the top of the deck' +
-        (placed ? ' (on the board)' : isPick && state.phase === 'setup' ? ' — click to select, double-click to place' : '')
+      title: card.name + (placed ? ' (on the board)' : state.phase === 'setup' ? ' — click to select, double-click to place' : '')
     });
-    row.innerHTML = '<span class="pos mono">' + (pos + 1) + '</span><span>' + card.icon + '</span>' +
+    row.innerHTML = '<span class="pos mono"></span><span>' + card.icon + '</span>' +
       '<span class="nm">' + card.name + (placed ? '<small>ON BOARD</small>' : '') + '</span>' + statCells(card);
     row.addEventListener('click', function(){ onPickClick(side, pos); });
-    if (isPick){
-      row.addEventListener('dblclick', function(){ onPickDoubleClick(side, pos); });
-      row.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); onPickClick(side, pos); } });
-    }
+    row.addEventListener('dblclick', function(){ onPickDoubleClick(side, pos); });
+    row.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); onPickClick(side, pos); } });
     return row;
   }
 
@@ -830,19 +812,12 @@
     for (var slot = 0; slot < UNIT_SLOTS; slot++) unitsRow.appendChild(renderUnit(side, slot, next));
 
     var deckSec = panel.appendChild(el('div', 'deck-section', {}));
-    var n = pickCount(p);
     var picksWrap = deckSec.appendChild(el('div', '', {}));
-    picksWrap.appendChild(el('div', 'row-label', {})).textContent = 'This round — top ' + n + ' of your deck';
+    picksWrap.appendChild(el('div', 'row-label', {})).textContent = 'Your deck — pick up to ' + UNIT_SLOTS + ' to field';
     var picks = picksWrap.appendChild(el('div', 'deck-list', {}));
-    if (n) picks.appendChild(statHeader());
-    if (!n) picks.appendChild(el('div', 'empty-note', {})).textContent = 'Your deck is empty.';
-    for (var i = 0; i < n; i++) picks.appendChild(renderDeckRow(side, i));
-    if (p.deck.length > n){
-      var restWrap = deckSec.appendChild(el('div', '', {}));
-      restWrap.appendChild(el('div', 'row-label', {})).textContent = 'Then, in order';
-      var list = restWrap.appendChild(el('div', 'deck-list', {}));
-      for (var j = n; j < p.deck.length; j++) list.appendChild(renderDeckRow(side, j));
-    }
+    if (p.deck.length) picks.appendChild(statHeader());
+    else picks.appendChild(el('div', 'empty-note', {})).textContent = 'Your deck is empty.';
+    for (var i = 0; i < p.deck.length; i++) picks.appendChild(renderDeckRow(side, i));
     if (p.discard.length){
       var discWrap = deckSec.appendChild(el('div', '', {}));
       discWrap.appendChild(el('div', 'row-label', {})).textContent = 'Discard pile — most recent first';
@@ -911,7 +886,7 @@
     var body = document.getElementById('actionBody');
     var sp = state.spotlight;
     panel.className = 'action-panel' + (sp && sp.side != null ? ' p' + (sp.side + 1) : '');
-    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Your top cards are placed. Rearrange them if you like, then start the battle.</div>'; return; }
+    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Pick up to 3 units from your deck, then start the battle.</div>'; return; }
     if (clock){ body.innerHTML = '<div class="action-wait">Simming… waiting for the next unit to act.</div>'; return; }
     body.innerHTML = '';
     if (!sp) return;
