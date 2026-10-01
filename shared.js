@@ -20,16 +20,16 @@ var CARD_DEFS = {
     ] },
   medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:15, ad:0,  ap:10, armor:10, mr:25, as:0.5,
     abilities:[
-      { id:'heal',   name:'Heal',    short:'HEAL', text:'Heals your weakest ally for 100% AP.' },
+      { id:'heal',   name:'Heal',    short:'HEAL', slots:[2], text:'Heals your weakest ally for 100% AP.' },
       { id:'adbuff', name:'AD buff', short:'+AD',  text:'Gives every friendly on-field unit +3 AD permanently.' }
     ] },
   predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:18, ad:16, ap:0,  armor:15, mr:10, as:0.5,
     abilities:[
-      { id:'trophy', name:'Trophy', short:'TROPHY', text:'Attacks the frontmost unit. Every kill permanently gives this card +2 AD for the rest of the game.' }
+      { id:'trophy', name:'Trophy', short:'TROPHY', slots:[2], text:'Attacks the frontmost unit. Every kill permanently gives this card +2 AD for the rest of the game.' }
     ] },
   warden:    { key:'warden',    name:'Warden',    icon:'⛉', role:'support',  hp:20, ad:0,  ap:0,  armor:30, mr:30, as:0.5,
     abilities:[
-      { id:'guard',   name:'Guard',   short:'GUARD',   text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
+      { id:'guard',   name:'Guard',   short:'GUARD',   slots:[0], text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
       { id:'fortify', name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor permanently (kept for the rest of the game). Stacks.' }
     ] },
   saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:16, ad:0,  ap:0,  armor:15, mr:15, as:0.5,

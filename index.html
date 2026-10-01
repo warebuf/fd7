@@ -259,11 +259,13 @@
     if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.pos, slot);
   }
   // A placed unit starts with the ability its card used last time if it is usable from this slot, otherwise
-  // its first ability that is.
+  // its first ability that is. With none usable from this slot (e.g. a Predator out of the back), ability is
+  // null: the unit just stands there and never acts.
   function newUnit(card, slot){
     var hp = card.hp + (card.bonusHp || 0);
     var last = findAbility(card, card.lastAbility);
-    return { card: card, hp: hp, maxHp: hp, ability: (abilityAllowed(last, slot) ? last : allowedAbilities(card, slot)[0]).id };
+    var usable = abilityAllowed(last, slot) ? last : allowedAbilities(card, slot)[0];
+    return { card: card, hp: hp, maxHp: hp, ability: usable ? usable.id : null };
   }
   // Abilities can be switched during setup, and in battle whenever it is paused on an action (not while the
   // clock runs). Switching mid-battle resets that unit's charge: its next action is a full cooldown away.
@@ -286,6 +288,7 @@
   }
   function cycleAbility(side, slot){
     var u = state.players[side].units[slot], list = allowedAbilities(u.card, slot);
+    if (!list.length) return;
     var i = list.indexOf(findAbility(u.card, u.ability));
     setAbility(side, slot, list[(i + 1) % list.length].id);
   }
@@ -349,7 +352,9 @@
     return Math.max(0, u.card.mr + (u.card.bonusMr || 0));
   }
   function cooldownOf(side, slot){
-    var as = state.players[side].units[slot].card.as;
+    var u = state.players[side].units[slot];
+    if (!u.ability) return Infinity;   // no ability usable from this slot: never acts
+    var as = u.card.as;
     return as > 0 ? Math.round(TICKS_PER_SECOND / as) : Infinity;
   }
 
@@ -699,6 +704,10 @@
   // The tile's headline: the ability the unit uses this round — a button that cycles through the abilities it
   // can use from this slot, whenever switching is allowed (and there is more than one).
   function roleLine(card, u, slot){
+    if (!u.ability){
+      var only = card.abilities.map(function(a){ return a.name + ' (' + slotRestriction(a) + ')'; }).join(', ');
+      return '<div class="line" title="No ability can be used from this slot: ' + only + '">NO ABILITY</div>';
+    }
     var ab = findAbility(card, u.ability);
     var tip = ab.name + ': ' + ab.text;
     if (canSwitchAbility() && allowedAbilities(card, slot).length > 1)
