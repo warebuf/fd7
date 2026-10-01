@@ -21,7 +21,7 @@ var CARD_DEFS = {
   medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:15, ad:0,  ap:10, armor:10, mr:25, as:0.5,
     effect:'Its ability depends on where it stands: front, middle or back.',
     positions:[
-      { name:'AP buff', short:'+AP', text:'Gives every friendly on-field unit +5 AP permanently.' },
+      { name:'Heal',    short:'HEAL',    text:'Heals your weakest ally for 100% AP.' },
       { name:'AD buff', short:'+AD', text:'Gives every friendly on-field unit +3 AD permanently.' },
       { name:'Heal',    short:'HEAL',    text:'Heals your weakest ally for 100% AP.' }
     ] },

@@ -413,7 +413,7 @@
 
   // ---------- Actions ----------
   // Every unit does something different in each board slot — see POSITION_ACTIONS.
-  var MEDIC_AP_BUFF = 5, MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
+  var MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
 
   // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
   function adOf(u){ return u.card.ad + (u.card.bonusAd || 0); }
@@ -481,11 +481,11 @@
       }
     ],
     medic: [
-      // 1 · AP buff for the whole side
-      function(side, slot, u){ buffTeam(side, u, 'bonusAp', MEDIC_AP_BUFF, 'AP'); },
-      // 2 · AD buff for the whole side
+      // Front · Heal the weakest ally (by HP %) for its AP
+      function(side, slot, u){ healWeakest(side, u, apOf(u)); },
+      // Middle · AD buff for the whole side
       function(side, slot, u){ buffTeam(side, u, 'bonusAd', MEDIC_AD_BUFF, 'AD'); },
-      // 3 · Heal the weakest ally (by HP %) for its AP
+      // Back · Heal, same as front
       function(side, slot, u){ healWeakest(side, u, apOf(u)); }
     ],
     predator: [
