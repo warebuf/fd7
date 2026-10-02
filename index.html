@@ -353,7 +353,7 @@
   }
   function cooldownOf(side, slot){
     var u = state.players[side].units[slot];
-    if (!u.ability) return Infinity;   // no ability usable from this slot: never acts
+    if (!u.ability || findAbility(u.card, u.ability).passive) return Infinity;   // no usable or only a passive ability: never acts
     var as = u.card.as;
     return as > 0 ? Math.round(TICKS_PER_SECOND / as) : Infinity;
   }
@@ -452,7 +452,7 @@
 
   // ---------- Actions ----------
   // Every unit uses the one ability its owner chose for it this round — see ABILITIES.
-  var MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, FORTIFY_ARMOR = 5, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
+  var MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
 
   // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
   function adOf(u){ return u.card.ad + (u.card.bonusAd || 0); }
@@ -481,19 +481,6 @@
     addLog('t' + state.tick + ': ' + state.players[side].name + "'s " + u.card.name + ' ' + text, type || 'meta');
   }
 
-  // Warden's Guard: attacks aimed at the weakest other ally hit Warden instead, until Warden acts again.
-  function wardenGuard(side, slot, u){
-    var p = state.players[side], best = -1, bestPct = Infinity;
-    p.units.forEach(function(a, i){
-      if (a && a.guardedBy === u) a.guardedBy = null;
-      if (a && a !== u && a.hp / a.maxHp < bestPct){ bestPct = a.hp / a.maxHp; best = i; }
-    });
-    if (best === -1){ say(side, u, 'has no ally to guard.', 'idle'); return; }
-    p.units[best].guardedBy = u;
-    state.fx.healed.push(p.units[best]);
-    say(side, u, 'guards ' + p.units[best].card.name + ': attacks aimed at it hit Warden instead.', 'meta');
-  }
-
   // Every ability by id (see each card's `abilities`). Each runs as function(side, slot, u).
   var ABILITIES = {
     // Striker · Heavy attack on a random enemy
@@ -502,7 +489,7 @@
         var alive = dp.units.map(function(e, i){ return e ? i : -1; }).filter(function(i){ return i !== -1; });
         if (!alive.length) return;
         var pick = alive[Math.floor(Math.random() * alive.length)];
-        strike(side, slot, u, 1 - side, { slot: pick }, Math.round(adOf(u) * HEAVY_MULT), 'physical', { what: 'heavy attack' });
+        strike(side, slot, u, 1 - side, chooseTarget(dp, pick), Math.round(adOf(u) * HEAVY_MULT), 'physical', { what: 'heavy attack' });
       },
     // Striker · Buff itself permanently (kept on the card for the rest of the game, like Predator trophies), then attack
     ramp: function(side, slot, u){
@@ -516,7 +503,7 @@
         var dp = state.players[1 - side], best = -1, bestPct = 1;
         dp.units.forEach(function(e, i){ if (e && e.hp < e.maxHp && e.hp / e.maxHp < bestPct){ bestPct = e.hp / e.maxHp; best = i; } });
         if (best === -1) return frontStrike(side, slot, u, adOf(u));
-        strike(side, slot, u, 1 - side, { slot: best }, adOf(u), 'physical', { what: 'execute' });
+        strike(side, slot, u, 1 - side, chooseTarget(dp, best), adOf(u), 'physical', { what: 'execute' });
       },
     // Medic · Heal the weakest ally (by HP %) for its AP
     heal: function(side, slot, u){ healWeakest(side, u, apOf(u)); },
@@ -568,21 +555,19 @@
         say(side, u, 'steals ' + amount + ' ' + st.label + ' from ' + dp.name + "'s " + victim.card.name + ', permanently.', 'attack');
         if (victim.hp <= 0) killUnit(dSide, vi);
       },
-    // Warden · Guard the weakest other ally until Warden acts again
-    guard: wardenGuard,
-    // Warden · Fortify: every unit on the side gets permanent armor
-    fortify: function(side, slot, u){
-        state.players[side].units.forEach(function(a){ if (a){ a.card.bonusArmor = (a.card.bonusArmor || 0) + FORTIFY_ARMOR; state.fx.healed.push(a); } });
-        say(side, u, 'fortifies: +' + FORTIFY_ARMOR + ' armor for the rest of the game to every unit on its side.', 'heal');
-      }
+    // Warden · Taunt is passive (never acted out) — see chooseTarget
+    taunt: function(){}
   };
 
   // Who does an attack on dp hit? The frontmost unit (front slot, else middle, else back) by default, or a
   // specific slot.
+  // A living taunter (Warden) overrides both: every enemy attack must target it.
   function chooseTarget(dp, prefer){
-    if (typeof prefer === 'number' && dp.units[prefer]) return { slot: prefer };
-    var first = dp.units.findIndex(Boolean);
-    return first === -1 ? null : { slot: first };
+    var natural = (typeof prefer === 'number' && dp.units[prefer]) ? prefer : dp.units.findIndex(Boolean);
+    if (natural === -1) return null;
+    var taunter = dp.units.findIndex(function(e){ return e && e.ability === 'taunt'; });
+    if (taunter !== -1) return { slot: taunter, taunted: taunter !== natural };   // taunted: pulled off its natural target
+    return { slot: natural };
   }
 
   function frontStrike(side, slot, u, amount, what, onKill){
@@ -590,21 +575,13 @@
     if (target) strike(side, slot, u, 1 - side, target, amount, 'physical', { what: what, onKill: onKill });
   }
 
-  // One unit hitting one enemy, with everything that hangs off a hit: Warden's Guard redirect, damage and
-  // kill bonuses.
+  // One unit hitting one enemy: damage and kill bonuses.
   function strike(side, slot, u, dSide, target, amount, type, opts){
     opts = opts || {};
     var dp = state.players[dSide];
     var label = state.players[side].name + "'s " + u.card.name + (opts.what ? ' (' + opts.what + ')' : '');
     var tSlot = target.slot, victim = dp.units[tSlot];
-    var warden = victim.guardedBy;
-    if (warden && warden !== victim){
-      var wSlot = dp.units.indexOf(warden);
-      if (wSlot !== -1){
-        addLog('t' + state.tick + ': ' + dp.name + "'s Warden takes the hit for " + victim.card.name + '.', 'meta');
-        tSlot = wSlot; victim = warden;
-      } else victim.guardedBy = null;
-    }
+    if (target.taunted) addLog('t' + state.tick + ': ' + dp.name + "'s " + victim.card.name + ' taunts — the attack has to go to it.', 'meta');
     var dealt = dealDamage(dSide, tSlot, amount, type, label);
     if (dp.units[tSlot] !== victim && opts.onKill) opts.onKill(victim);
     return dealt;
@@ -732,7 +709,6 @@
   // Temporary states worth seeing at a glance.
   function statusLine(u){
     var tags = [];
-    if (u.guardedBy) tags.push('GUARDED');
     if (u.delayed) tags.push('DELAYED +' + u.delayed);
     permanentBonuses(u.card).forEach(function(b){ tags.push(signed(b.amount) + ' ' + b.short); });
     return tags.length ? '<div class="line status">' + tags.join(' · ') + '</div>' : '';
@@ -859,11 +835,10 @@
     if (u && u.card === ins.card){
       var live = ['On ' + state.players[ins.side].name + "'s board", SLOT_NAMES[ins.slot] + ' slot', 'Turn order #' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,
                   'ARM ' + armorOf(ins.side, ins.slot) + ' · MR ' + mrOf(ins.side, ins.slot)];
-      if (u.guardedBy) live.push('Guarded by Warden');
       if (u.delayed) live.push('Delayed ' + u.delayed + ' ticks by a Saboteur');
       permanentBonuses(ins.card).forEach(function(b){ live.push('Permanent: ' + signed(b.amount) + ' ' + b.long + ' for the game'); });
       var icd = cooldownOf(ins.side, ins.slot);
-      live.push(isFinite(icd) ? 'Acts every ' + icd + ' ticks' : 'Does not act on its own in this slot');
+      live.push(isFinite(icd) ? 'Acts every ' + icd + ' ticks' : u.ability ? 'Passive — never acts' : 'Does not act on its own in this slot');
       html += '<div class="inspector-live">' + live.join(' · ') + '</div>';
     }
     body.innerHTML = html;
