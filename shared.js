@@ -7,7 +7,8 @@
 //   armor  reduces physical damage, mr (magic resist) reduces magic damage: taken = dmg × 100 / (100 + resist)
 //   as     attack speed — actions per second, one second being TICKS_PER_SECOND ticks (0 = never acts)
 // Every unit has a list of `abilities`; each round its owner picks which one it uses (ids resolve in ABILITIES in
-// index.html). An ability with `slots` can only be used from those board slots (0 front, 1 middle, 2 back).
+// index.html). An ability with `slots` can only be used from those board slots (0 front, 1 middle, 2 back);
+// a `passive` one is never acted out — it works just by the unit being on the board (Warden's Taunt).
 // Board slots also matter for targeting (attacks land on the frontmost unit) and turn order.
 var TICKS_PER_SECOND = 10;
 
@@ -29,8 +30,7 @@ var CARD_DEFS = {
     ] },
   warden:    { key:'warden',    name:'Warden',    icon:'⛉', role:'support',  hp:20, ad:0,  ap:0,  armor:40, mr:30, as:0.5,
     abilities:[
-      { id:'guard',   name:'Guard',   short:'GUARD',   slots:[0], text:'Guards your weakest other ally: attacks aimed at it hit Warden instead, until Warden acts again.' },
-      { id:'fortify', name:'Fortify', short:'FORTIFY', text:'Gives every unit on your side +5 armor permanently (kept for the rest of the game). Stacks.' }
+      { id:'taunt', name:'Taunt', short:'TAUNT', passive:true, text:'Never acts. While Warden lives, every enemy attack must target it.' }
     ] },
   saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:16, ad:0,  ap:0,  armor:15, mr:15, as:0.5,
     abilities:[
