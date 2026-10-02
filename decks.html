@@ -29,8 +29,6 @@
   .row-card:first-child{ border-top:none; }
   .row-card.r-attacker{ --role:var(--danger); }
   .row-card.r-healer{ --role:var(--heal); }
-  .row-card.r-tank{ --role:var(--tank); }
-  .row-card.r-mage{ --role:var(--magic); }
   .row-card.r-support{ --role:var(--support); }
   .row-card .icon{ width:24px; text-align:center; font-size:1.1rem; }
   .row-card .info{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:3px; }
@@ -115,7 +113,8 @@
       '<div class="info"><div class="name">' + card.name + '<small>' + roleLabel(card) + '</small></div>' +
       (withDetails
         ? '<div class="pills">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
-          '<div class="fx">' + card.effect + '</div>'
+          '<div class="fx">' + (card.abilities.length > 1 ? 'Abilities (pick 1, switchable mid-battle): ' : 'Ability: ') +
+            card.abilities.map(function(ab){ return ab.name + (ab.slots ? ' (' + slotRestriction(ab) + ')' : ''); }).join(' · ') + '</div>'
         : '') +
       '</div>' +
       '<div class="stepper"><button class="btn" type="button" aria-label="Remove one ' + card.name + '">−</button>' +
