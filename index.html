@@ -473,7 +473,7 @@
 
   // ---------- Actions ----------
   // Every unit uses the one ability its owner chose for it this round — see ABILITIES.
-  var MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
+  var MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, FLANK_MULT = 0.5, STRIKER_RAMP_AD = 5, TROPHY_AD = 2, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
 
   // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
   function adOf(u){ return u.card.ad + (u.card.bonusAd || 0); }
@@ -536,6 +536,13 @@
           u.card.bonusAd = (u.card.bonusAd || 0) + TROPHY_AD;
           say(side, u, 'claims a trophy: +' + TROPHY_AD + ' AD for the rest of the game (now ' + adOf(u) + ').', 'heal');
         });
+      },
+    // Predator · Flank: hit the backmost enemy (back slot, else middle, else front) for FLANK_MULT of its AD
+    flank: function(side, slot, u){
+        var dp = state.players[1 - side], back = -1;
+        dp.units.forEach(function(e, i){ if (e) back = i; });
+        if (back === -1) return;
+        strike(side, slot, u, 1 - side, chooseTarget(dp, back), Math.round(adOf(u) * FLANK_MULT), 'physical', { what: 'flank' });
       },
     // Saboteur · Sabotage: push back the next enemy action
     sabotage: function(side, slot, u){
