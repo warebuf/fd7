@@ -13,27 +13,27 @@
 var TICKS_PER_SECOND = 10;
 
 var CARD_DEFS = {
-  striker:   { key:'striker',   name:'Striker',   icon:'⚔', role:'attacker', hp:15, ad:10, ap:0,  armor:15, mr:10, as:0.5,
+  striker:   { key:'striker',   name:'Striker',   icon:'⚔', role:'attacker', hp:30, ad:10, ap:0,  armor:15, mr:10, as:0.5,
     abilities:[
       { id:'heavy',   name:'Heavy attack', short:'HEAVY',   text:'Hits a random enemy for 150% of its AD.' },
       { id:'ramp',    name:'Buff itself',  short:'RAMP',    text:'Permanently gains +5 AD.' },
       { id:'execute', name:'Execute',      short:'EXECUTE', text:'Attack the most damaged enemy (lowest HP %) for 100% AD.' }
     ] },
-  medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:25, ad:0,  ap:10, armor:5, mr:25, as:1,
+  medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:50, ad:0,  ap:10, armor:5, mr:25, as:1,
     abilities:[
       { id:'heal',   name:'Heal',    short:'HEAL', text:'Heals your weakest ally for 100% AP.' },
       { id:'adbuff', name:'AD buff', short:'+AD',  text:'Gives every friendly on-field unit +3 AD permanently.' }
     ] },
-  predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:15, ad:14, ap:0,  armor:10, mr:10, as:0.5,
+  predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:30, ad:14, ap:0,  armor:10, mr:10, as:0.5,
     abilities:[
       { id:'trophy', name:'Trophy', short:'TROPHY', lines:['back'], text:'Attacks the frontmost unit. Every kill permanently gives this card +2 AD for the rest of the game.' },
       { id:'flank',  name:'Flank',  short:'FLANK',  text:'Attacks the backmost enemy for 50% AD.' }
     ] },
-  warden:    { key:'warden',    name:'Warden',    icon:'⛉', role:'support',  hp:20, ad:0,  ap:0,  armor:40, mr:30, as:0.5,
+  warden:    { key:'warden',    name:'Warden',    icon:'⛉', role:'support',  hp:40, ad:0,  ap:0,  armor:40, mr:30, as:0.5,
     abilities:[
       { id:'taunt', name:'Taunt', short:'TAUNT', passive:true, text:'Never acts. While Warden lives, every enemy attack must target it.' }
     ] },
-  saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:16, ad:0,  ap:0,  armor:15, mr:15, as:0.5,
+  saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:32, ad:0,  ap:0,  armor:15, mr:15, as:0.5,
     abilities:[
       { id:'sabotage', name:'Sabotage', short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
       { id:'steal',    name:'Steal',    short:'STEAL', lines:['back'], text:'Steals 10% of a random stat from a random enemy, permanently.' }
