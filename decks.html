@@ -114,7 +114,7 @@
       (withDetails
         ? '<div class="pills">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
           '<div class="fx">' + (card.abilities.length > 1 ? 'Abilities (pick 1, switchable mid-battle): ' : 'Ability: ') +
-            card.abilities.map(function(ab){ return ab.name + (ab.slots ? ' (' + slotRestriction(ab) + ')' : ''); }).join(' · ') + '</div>'
+            card.abilities.map(function(ab){ return ab.name + (ab.lines ? ' (' + slotRestriction(ab) + ')' : ''); }).join(' · ') + '</div>'
         : '') +
       '</div>' +
       '<div class="stepper"><button class="btn" type="button" aria-label="Remove one ' + card.name + '">−</button>' +

@@ -7,7 +7,7 @@
 //   armor  reduces physical damage, mr (magic resist) reduces magic damage: taken = dmg × 100 / (100 + resist)
 //   as     attack speed — actions per second, one second being TICKS_PER_SECOND ticks (0 = never acts)
 // Every unit has a list of `abilities`; each round its owner picks which one it uses (ids resolve in ABILITIES in
-// index.html). An ability with `slots` can only be used from those board slots (0 front, 1 middle, 2 back);
+// index.html). An ability with `lines` can only be used from slots on those lines ('front', 'middle', 'back');
 // a `passive` one is never acted out — it works just by the unit being on the board (Warden's Taunt).
 // Board slots also matter for targeting (attacks land on the frontmost unit) and turn order.
 var TICKS_PER_SECOND = 10;
@@ -26,7 +26,7 @@ var CARD_DEFS = {
     ] },
   predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:15, ad:14, ap:0,  armor:10, mr:10, as:0.5,
     abilities:[
-      { id:'trophy', name:'Trophy', short:'TROPHY', slots:[2], text:'Attacks the frontmost unit. Every kill permanently gives this card +2 AD for the rest of the game.' },
+      { id:'trophy', name:'Trophy', short:'TROPHY', lines:['back'], text:'Attacks the frontmost unit. Every kill permanently gives this card +2 AD for the rest of the game.' },
       { id:'flank',  name:'Flank',  short:'FLANK',  text:'Attacks the backmost enemy for 50% AD.' }
     ] },
   warden:    { key:'warden',    name:'Warden',    icon:'⛉', role:'support',  hp:20, ad:0,  ap:0,  armor:40, mr:30, as:0.5,
@@ -36,7 +36,7 @@ var CARD_DEFS = {
   saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:16, ad:0,  ap:0,  armor:15, mr:15, as:0.5,
     abilities:[
       { id:'sabotage', name:'Sabotage', short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
-      { id:'steal',    name:'Steal',    short:'STEAL', slots:[2], text:'Steals 10% of a random stat from a random enemy, permanently.' }
+      { id:'steal',    name:'Steal',    short:'STEAL', lines:['back'], text:'Steals 10% of a random stat from a random enemy, permanently.' }
     ] }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).
@@ -48,10 +48,12 @@ Object.keys(CARD_DEFS).forEach(function(k){
 var DECK_SIZE = 9;   // every deck is exactly this many cards
 var DEFAULT_RECIPE = { striker:2, medic:2, predator:2, warden:2, saboteur:1 };
 var MAX_COPIES = 6;
-// The three board slots by index (0 front, 1 middle, 2 back). Front is where attacks land by default. On screen
-// each side's front faces the middle, so the left player's board is drawn Back · Middle · Front.
-var SLOT_NAMES = ['Front', 'Middle', 'Back'];
-var HAND_SIZE = 5;   // each round you draw this many cards and field up to 3 of them
+// The board slots by index, front to back: two front-line slots, one middle, one back. Attacks land on the
+// frontmost unit by default. On screen each side's front faces the middle, so the left player's board is drawn
+// back to front.
+var SLOT_NAMES = ['Front', 'Front', 'Middle', 'Back'];
+var SLOT_LINES = ['front', 'front', 'middle', 'back'];
+var HAND_SIZE = 5;   // each round you draw this many cards and field up to one per board slot
 var DECK_STORAGE_KEY = 'fd7-deck-recipes';
 
 function el(tag, cls, attrs){
@@ -76,10 +78,12 @@ function findAbility(card, id){
   return card.abilities.filter(function(a){ return a.id === id; })[0] || card.abilities[0];
 }
 // Can this ability be used from board slot `slot`? (slot undefined = not on the board: no restriction.)
-function abilityAllowed(ab, slot){ return slot == null || !ab.slots || ab.slots.indexOf(slot) !== -1; }
+function abilityAllowed(ab, slot){ return slot == null || !ab.lines || ab.lines.indexOf(SLOT_LINES[slot]) !== -1; }
 function allowedAbilities(card, slot){ return card.abilities.filter(function(ab){ return abilityAllowed(ab, slot); }); }
-// "Back only", for abilities restricted to certain slots; '' otherwise.
-function slotRestriction(ab){ return ab.slots ? ab.slots.map(function(i){ return SLOT_NAMES[i]; }).join('/') + ' only' : ''; }
+// "Back only", for abilities restricted to certain lines; '' otherwise.
+function slotRestriction(ab){
+  return ab.lines ? ab.lines.map(function(l){ return l.charAt(0).toUpperCase() + l.slice(1); }).join('/') + ' only' : '';
+}
 
 // Title, stat pills and abilities for a "Card Info" panel. activeId highlights the ability the unit is using;
 // pickable makes each ability usable from `slot` clickable (data-ability) so it can be switched (setup, or a
