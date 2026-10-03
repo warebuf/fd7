@@ -24,6 +24,8 @@
   .row{ display:flex; flex-wrap:wrap; gap:8px; }
   .slot-names{ display:flex; gap:8px; }
   .slot-names .row-label{ width:92px; text-align:center; }
+  /* each board is centered in its panel; the left one is mirrored (Back · Middle · Front) so the front lines face */
+  .slot-names, .units-row{ justify-content:center; }
   .deck-section{ flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
   .deck-list{ display:flex; flex-direction:column; gap:3px; }
   /* deck rows are a small table: position, icon, name, then one aligned column per stat */
@@ -335,7 +337,7 @@
   }
 
   // Turn order: the six board slots are numbered 1–6 and lower numbers act first when units act on the same
-  // tick. One side's slots are 1, 3, 5 (left to right), the other's 2, 4, 6, and the sides swap every round.
+  // tick. One side's slots are 1, 3, 5 (front to back), the other's 2, 4, 6, and the sides swap every round.
   function oddSide(){ return (state.round - 1) % 2; }
   function priority(side, slot){ return 2 * slot + (side === oddSide() ? 1 : 2); }
   function logTurnOrder(){
@@ -806,10 +808,13 @@
       '<span class="pill mono" title="Cards left in your deck (drawn at random)">Deck ' + p.deck.length + '</span>' +
       '<span class="pill mono" title="Cards in the discard pile">Discard ' + p.discard.length + '</span></div>';
     var unitsSec = panel.appendChild(el('div', '', {}));
+    // Slots are drawn facing the middle of the screen: the left player's run Back · Middle · Front, the right
+    // player's Front · Middle · Back. Only the drawing order changes; slot 0 is always the front.
+    var drawOrder = side === 0 ? [2, 1, 0] : [0, 1, 2];
     var slotNames = unitsSec.appendChild(el('div', 'slot-names', {}));
-    SLOT_NAMES.forEach(function(n){ slotNames.appendChild(el('div', 'row-label', {})).textContent = n; });
-    var unitsRow = unitsSec.appendChild(el('div', 'row', {}));
-    for (var slot = 0; slot < UNIT_SLOTS; slot++) unitsRow.appendChild(renderUnit(side, slot, next));
+    drawOrder.forEach(function(slot){ slotNames.appendChild(el('div', 'row-label', {})).textContent = SLOT_NAMES[slot]; });
+    var unitsRow = unitsSec.appendChild(el('div', 'row units-row', {}));
+    drawOrder.forEach(function(slot){ unitsRow.appendChild(renderUnit(side, slot, next)); });
 
     var deckSec = panel.appendChild(el('div', 'deck-section', {}));
     var picksWrap = deckSec.appendChild(el('div', '', {}));

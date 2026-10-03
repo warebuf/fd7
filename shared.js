@@ -47,7 +47,8 @@ Object.keys(CARD_DEFS).forEach(function(k){
 var DECK_SIZE = 9;   // every deck is exactly this many cards
 var DEFAULT_RECIPE = { striker:2, medic:2, predator:2, warden:2, saboteur:1 };
 var MAX_COPIES = 6;
-// The three board slots, left to right. Front is where attacks land by default.
+// The three board slots by index (0 front, 1 middle, 2 back). Front is where attacks land by default. On screen
+// each side's front faces the middle, so the left player's board is drawn Back · Middle · Front.
 var SLOT_NAMES = ['Front', 'Middle', 'Back'];
 var HAND_SIZE = 5;   // each round you draw this many cards and field up to 3 of them
 var DECK_STORAGE_KEY = 'fd7-deck-recipes';
