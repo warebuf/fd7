@@ -153,7 +153,7 @@
     <span class="pill">Round <b id="roundLabel">1</b></span>
     <span class="pill mono" title="Rounds won">P1 <b id="scoreLabel">0 – 0</b> P2</span>
     <span class="pill" id="phasePill"><b id="phaseLabel">Setup</b></span>
-    <span class="pill mono" id="tickPill" hidden>Tick <b id="tickLabel">0</b>/60</span>
+    <span class="pill mono" id="tickPill" hidden>Tick <b id="tickLabel">0</b>/<span id="tickMax"></span></span>
     <div class="round-progress" id="roundProgress" hidden title="Round clock"><div id="roundFill"></div></div>
     <span class="pill" id="nextPill" hidden>Next: <b id="nextLabel"></b></span>
     <span class="spacer"></span>
@@ -185,7 +185,7 @@
 <script src="shared.js"></script>
 <script>
 (function(){
-  var UNIT_SLOTS = SLOT_NAMES.length, SIM_TICKS = 60;
+  var UNIT_SLOTS = SLOT_NAMES.length, SIM_TICKS = 120;   // ticks per round
   var state;
   var cardUid = 0;
 
@@ -893,6 +893,7 @@
     document.getElementById('phaseLabel').textContent = PHASE_LABEL[state.phase];
     document.getElementById('tickPill').hidden = state.phase === 'setup';
     document.getElementById('tickLabel').textContent = state.tick;
+    document.getElementById('tickMax').textContent = SIM_TICKS;
     document.getElementById('roundProgress').hidden = state.phase === 'setup';
     document.getElementById('roundFill').style.width = (state.tick / SIM_TICKS * 100) + '%';
     document.getElementById('nextPill').hidden = !next;
