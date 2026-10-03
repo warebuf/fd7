@@ -21,7 +21,7 @@ var CARD_DEFS = {
     ] },
   medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:25, ad:0,  ap:10, armor:5, mr:25, as:1,
     abilities:[
-      { id:'heal',   name:'Heal',    short:'HEAL', slots:[2], text:'Heals your weakest ally for 100% AP.' },
+      { id:'heal',   name:'Heal',    short:'HEAL', text:'Heals your weakest ally for 100% AP.' },
       { id:'adbuff', name:'AD buff', short:'+AD',  text:'Gives every friendly on-field unit +3 AD permanently.' }
     ] },
   predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:15, ad:14, ap:0,  armor:10, mr:10, as:0.5,
