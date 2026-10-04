@@ -6,6 +6,7 @@
 //   ap     ability power — Medic heals for this
 //   armor  reduces physical damage, mr (magic resist) reduces magic damage: taken = dmg × 100 / (100 + resist)
 //   as     attack speed — actions per second, one second being TICKS_PER_SECOND ticks (0 = never acts)
+// A card or ability may have an energy `cost` (default 0: free) — see Energy in index.html.
 // Every unit has a list of `abilities`; each round its owner picks which one it uses (ids resolve in ABILITIES in
 // index.html). An ability with `lines` can only be used from slots on those lines ('front', 'middle', 'back');
 // a `passive` one is never acted out — it works just by the unit being on the board (Warden's Taunt).
@@ -16,17 +17,18 @@ var CARD_DEFS = {
   striker:   { key:'striker',   name:'Striker',   icon:'⚔', role:'attacker', hp:30, ad:10, ap:0,  armor:15, mr:10, as:0.5,
     abilities:[
       { id:'heavy',   name:'Heavy attack', short:'HEAVY',   text:'Hits a random enemy for 150% of its AD.' },
-      { id:'ramp',    name:'Buff itself',  short:'RAMP',    text:'Permanently gains +5 AD.' },
+      { id:'breach',  name:'Breach',       short:'BREACH',  cost:2, text:'Its next attack hits the frontmost enemy and the unit behind it.' },
       { id:'execute', name:'Execute',      short:'EXECUTE', text:'Attack the most damaged enemy (lowest HP %) for 100% AD.' }
     ] },
   medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:50, ad:0,  ap:10, armor:5, mr:25, as:1,
     abilities:[
       { id:'heal',   name:'Heal',    short:'HEAL', text:'Heals your weakest ally for 100% AP.' },
-      { id:'adbuff', name:'AD buff', short:'+AD',  text:'Gives every friendly on-field unit +3 AD permanently.' }
+      { id:'adbuff', name:'AD buff', short:'+AD',  text:'Gives every friendly on-field unit +3 AD permanently.' },
+      { id:'revive', name:'Revive',  short:'REVIVE', cost:4, text:'Return a defeated ally at half HP with zero charge.' }
     ] },
   predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:30, ad:14, ap:0,  armor:10, mr:10, as:0.5,
     abilities:[
-      { id:'trophy', name:'Trophy', short:'TROPHY', lines:['back'], text:'Attacks the frontmost unit. Every kill permanently gives this card +2 AD for the rest of the game.' },
+      { id:'trophy', name:'Trophy', short:'TROPHY', lines:['back'], text:'Attack the frontmost enemy for 100% AD. If this ability kills the target, permanently gain +2 AD.' },
       { id:'flank',  name:'Flank',  short:'FLANK',  text:'Attacks the backmost enemy for 50% AD.' }
     ] },
   warden:    { key:'warden',    name:'Warden',    icon:'⛉', role:'support',  hp:40, ad:0,  ap:0,  armor:40, mr:30, as:0.5,
@@ -37,6 +39,19 @@ var CARD_DEFS = {
     abilities:[
       { id:'sabotage', name:'Sabotage', short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
       { id:'steal',    name:'Steal',    short:'STEAL', lines:['back'], text:'Steals 10% of a random stat from a random enemy, permanently.' }
+    ] },
+  generator: { key:'generator', name:'Generator', icon:'⚡', role:'support',  hp:30, ad:0,  ap:0,  armor:15, mr:15, as:0.1,
+    abilities:[
+      { id:'generate', name:'Generate', short:'+1 ⚡', text:'Takes 100 ticks to charge. Gives you 1 energy.' }
+    ] },
+  chronomancer: { key:'chronomancer', name:'Chronomancer', icon:'⧗', role:'support', hp:30, ad:0, ap:0, armor:15, mr:20, as:0.4,
+    abilities:[
+      { id:'timewarp', name:'Time Warp', short:'WARP', cost:3, text:'Gives all ally units full charge: each acts right away, then charges again from empty.' }
+    ] },
+  dynamo:    { key:'dynamo',    name:'Dynamo',    icon:'✷', role:'attacker', hp:30, ad:10, ap:0,  armor:15, mr:10, as:0.5,
+    abilities:[
+      { id:'empower', name:'Empower', short:'EMPOWER', cost:1, text:'Spend 1 energy to gain +5 AD for the round.' },
+      { id:'strike',  name:'Strike',  short:'STRIKE',  text:'Attack for 100% AD.' }
     ] }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).
@@ -93,11 +108,13 @@ function cardInfoHtml(card, activeId, pickable, slot){
     var ok = abilityAllowed(ab, slot), limit = slotRestriction(ab);
     return '<div class="pos-item' + (ab.id === activeId ? ' active' : '') + (ok ? '' : ' unavailable') +
       (pickable && ok ? ' pickable" data-ability="' + ab.id + '" role="button" tabindex="0' : '') + '">' +
-      '<div><b>' + ab.name + '</b>' + (limit ? ' <span class="pos-limit">' + limit + '</span>' : '') + ' — ' + ab.text + '</div></div>';
+      '<div><b>' + ab.name + '</b>' + (ab.cost ? ' <span class="pos-limit">⚡' + ab.cost + '</span>' : '') +
+      (limit ? ' <span class="pos-limit">' + limit + '</span>' : '') + ' — ' + ab.text + '</div></div>';
   }).join('') + '</div>';
   var count = card.abilities.length;
   return '<div class="inspector-title"><div class="inspector-icon">' + card.icon + '</div>' +
-    '<div><div class="inspector-name">' + card.name + '</div><div class="inspector-role">' + roleLabel(card) +
+    '<div><div class="inspector-name">' + card.name + (card.cost ? ' <span class="pos-limit">⚡' + card.cost + ' to field</span>' : '') +
+    '</div><div class="inspector-role">' + roleLabel(card) +
     (count > 1 ? ' · choose 1 of ' + count + ' abilities' : '') + '</div></div></div>' +
     '<div class="inspector-stats">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
     effect;
