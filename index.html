@@ -84,25 +84,21 @@
   .bar.hp.low > div{ background:var(--danger); }
   .bar.cd > div{ background:var(--side); opacity:.6; }
   .bar.cd.full > div{ opacity:1; }
-  /* a unit pulses when its charge fills and it acts */
-  .tile.acted{ animation:acted .45s ease-out; }
-  @keyframes acted{
-    0%{ transform:scale(1); box-shadow:0 0 0 0 var(--role); }
-    35%{ transform:scale(1.07); box-shadow:0 0 0 5px var(--role); }
-    100%{ transform:scale(1); box-shadow:0 0 0 0 transparent; }
-  }
   .round-progress{ width:90px; height:5px; border-radius:999px; background:var(--line); overflow:hidden; }
   .round-progress > div{ height:100%; width:0; background:var(--text-dim); }
-  /* units that took damage shake red, healed units glow green */
-  .tile.healed{ animation:healed .6s ease-out; }
-  @keyframes healed{ 0%,100%{ box-shadow:0 0 0 0 transparent; } 40%{ box-shadow:0 0 0 5px var(--heal); } }
-  .tile.hit{ animation:hit .45s ease-out; }
-  @keyframes hit{
-    0%,100%{ transform:translateX(0); box-shadow:0 0 0 0 transparent; }
-    20%{ transform:translateX(-4px); box-shadow:0 0 0 4px var(--danger); }
-    45%{ transform:translateX(4px); } 70%{ transform:translateX(-2px); }
+  /* battle animations (see playEvents): a bolt flies from attacker to target, numbers float off the units */
+  .bolt{
+    position:fixed; left:0; top:0; width:10px; height:10px; margin:-5px 0 0 -5px; border-radius:50%;
+    background:var(--bolt); box-shadow:0 0 10px 2px var(--bolt); pointer-events:none; z-index:30;
   }
-  @media (prefers-reduced-motion: reduce){ .tile.acted, .tile.hit, .tile.healed{ animation:none; } }
+  .float-text{
+    position:absolute; left:50%; top:38%; transform:translateX(-50%); pointer-events:none; z-index:5; white-space:nowrap;
+    font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.95rem; text-shadow:0 1px 2px var(--panel);
+  }
+  .float-text.dmg{ color:var(--danger); }
+  .float-text.heal{ color:var(--heal); }
+  .float-text.buff{ color:var(--support); font-size:.8rem; }
+  .float-text.debuff{ color:var(--text-dim); font-size:.8rem; }
 
   /* the action spotlight: what the last pause is showing */
   .action-panel{
@@ -203,7 +199,7 @@
     stopClock();
     state = {
       round: 1, phase: 'setup', tick: 0, roundWins: [0, 0], log: [], logSeq: 0, queue: [],
-      fx: { acted: [], hit: [], healed: [] },   // units to animate on the next render
+      fx: newFx(),      // animations recorded this tick, played after the board redraws
       spotlight: null,  // { title, side, fromSeq } — the action panel shows log lines from fromSeq on
       inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
       players: [newPlayer('Player 1'), newPlayer('Player 2')]
@@ -253,13 +249,14 @@
     var usable = abilityAllowed(last, slot) ? last : allowedAbilities(card, slot)[0];
     return { card: card, hp: hp, maxHp: hp, ability: usable ? usable.id : null };
   }
-  // Abilities can be switched during setup, and in battle whenever it is paused on an action (not while the
-  // clock runs). Switching mid-battle resets that unit's charge: its next action is a full cooldown away.
-  function canSwitchAbility(){ return state.phase === 'setup' || (state.phase === 'battle' && !clock); }
+  // Abilities can be switched during setup and during the battle. Switching mid-battle pauses the sim (if it is
+  // running) and resets that unit's charge: its next action is a full cooldown away.
+  function canSwitchAbility(){ return state.phase === 'setup' || state.phase === 'battle'; }
   // Returns true if the unit now uses that ability.
   function setAbility(side, slot, id){
     var p = state.players[side], u = p.units[slot];
     if (!canSwitchAbility() || !u || !abilityAllowed(findAbility(u.card, id), slot)) return false;
+    if (state.phase === 'battle' && clock){ stopClock(); addLog('t' + state.tick + ': battle paused to switch an ability.', 'meta'); }
     var next = findAbility(u.card, id).id;
     if (next !== u.ability){
       // in setup a switch re-plans the cost; mid-battle a costed ability is paid for on the spot
@@ -379,36 +376,42 @@
 
   // Resolves the next queued action on the current tick and spotlights it. Queued units killed earlier this
   // tick have left their slot empty and are skipped. Returns false if nothing was left on this tick.
+  // Resolves the next queued action on the current tick. Queued units killed earlier this tick have left their
+  // slot empty and are skipped. Returns false if nothing was left on this tick. The caller renders.
   function resolveNext(){
     while (state.queue.length){
       var a = state.queue.shift();
       var u = state.players[a.side].units[a.slot];
       if (!u) continue;
-      clearFx();
-      state.spotlight = { title: 't' + state.tick + ' · ' + state.players[a.side].name + "'s " + u.card.name, side: a.side, fromSeq: state.logSeq };
-      state.fx.acted.push(u);
+      var start = state.fx.cursor;
+      state.fx.impact = null;
+      state.fx.events.push({ type: 'act', side: a.side, slot: a.slot, at: start });
       act(a.side, a.slot, u);
-      if (!checkForWipe()) render();
+      if (state.fx.cursor === start) state.fx.cursor += FX_STEP;   // no attack: still give the next action its own beat
+      checkForWipe();
       return true;
     }
     return false;
   }
-  function clearFx(){ state.fx = { acted: [], hit: [], healed: [] }; }
+  function clearFx(){ state.fx = newFx(); }
   function timeUp(){
     state.spotlight = { title: 'Time is up', fromSeq: state.logSeq };
     endRound(null, 'time ran out with units standing on both sides');
   }
 
   // ---------- The clock ----------
-  // The battle sims in real time until the next unit acts, then pauses on that action until Continue is
-  // clicked. The clock advances TICK_MS per tick, and charge bars fill smoothly between renders.
-  var TICK_MS = 60;
+  // The battle sims on its own: the clock advances TICK_MS per tick and charge bars fill smoothly. On a tick
+  // where units act, every action resolves, the board redraws to show the hits, and the clock holds for
+  // ACTION_HOLD_MS before moving on. Pause/Resume stops and restarts it at any time, and switching an
+  // ability mid-battle pauses it.
+  var TICK_MS = 100;           // real time per tick: how fast charge bars fill
+  var ACTION_HOLD_MS = 1200;   // how long the sim pauses on each tick where units act, so the hits can be read
   var clock = null;   // { frac, last, raf } while simming
 
-  function continueBattle(){
-    if (state.phase !== 'battle' || clock) return;
-    if (resolveNext()) return;   // more units act on this same tick: show the next one without time passing
-    startClock();
+  function togglePause(){
+    if (state.phase !== 'battle') return;
+    if (clock){ stopClock(); render(); }
+    else startClock();
   }
   function startClock(){
     clearFx();
@@ -420,6 +423,69 @@
     if (clock && clock.raf) cancelAnimationFrame(clock.raf);
     clock = null;
   }
+  // ---------- Battle animations ----------
+  // While a tick resolves, effects are recorded as timed events (fx.events); after the board redraws they play in
+  // order: the attacker lunges toward the enemy, a bolt flies to its target, and when it lands the target flashes
+  // and a number floats off it (−damage, +heal, buffs). Actions on one tick play FX_STEP ms apart.
+  var FX_STEP = 220, FX_FLIGHT = 280;
+  var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  function newFx(){ return { events: [], cursor: 0, impact: null }; }
+  function fxAttack(side, slot, toSide, toSlot){
+    var at = state.fx.cursor;
+    state.fx.events.push({ type: 'attack', side: side, slot: slot, toSide: toSide, toSlot: toSlot, at: at });
+    state.fx.cursor += FX_STEP;
+    state.fx.impact = at + FX_FLIGHT;
+  }
+  // a floating label on a unit: at the moment the current attack lands, or right away for non-attacks
+  function fxFloat(side, slot, text, kind){
+    state.fx.events.push({ type: 'float', side: side, slot: slot, text: text, kind: kind,
+      at: state.fx.impact != null ? state.fx.impact : state.fx.cursor });
+  }
+  function unitEl(side, slot){ return document.querySelector('[data-unit="' + side + '-' + slot + '"]'); }
+  function playEvents(){
+    if (!document.body) return;
+    state.fx.events.forEach(function(e){
+      var at = unitEl(e.side, e.slot);
+      if (!at || !at.animate) return;
+      var toward = e.side === 0 ? 1 : -1;   // the left player's units face right, the right player's face left
+      if (e.type === 'act' && !reduceMotion){
+        at.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.06)' }, { transform: 'scale(1)' }], { duration: 260, delay: e.at });
+      }
+      if (e.type === 'attack'){
+        var to = unitEl(e.toSide, e.toSlot);
+        if (!to || reduceMotion) return;
+        at.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(' + (14 * toward) + 'px)' }, { transform: 'translateX(0)' }],
+          { duration: 300, delay: e.at, easing: 'ease-out' });
+        var a = at.getBoundingClientRect(), b = to.getBoundingClientRect();
+        var bolt = document.body.appendChild(el('div', 'bolt', {}));
+        if (!bolt.animate) return;
+        bolt.style.setProperty('--bolt', e.side === 0 ? 'var(--p1)' : 'var(--p2)');
+        var x1 = a.left + a.width / 2, y1 = a.top + a.height / 2, x2 = b.left + b.width / 2, y2 = b.top + b.height / 2;
+        bolt.animate([{ transform: 'translate(' + x1 + 'px,' + y1 + 'px)', opacity: 1 }, { transform: 'translate(' + x2 + 'px,' + y2 + 'px)', opacity: 1 }],
+          { duration: FX_FLIGHT, delay: e.at, easing: 'ease-in', fill: 'both' }).onfinish = function(){ bolt.remove(); };
+      }
+      if (e.type === 'float'){
+        var label = at.appendChild(el('div', 'float-text ' + e.kind, {}));
+        label.textContent = e.text;
+        label.animate([{ opacity: 0, transform: 'translate(-50%, 6px)' }, { opacity: 1, transform: 'translate(-50%, -8px)', offset: .2 },
+                       { opacity: 0, transform: 'translate(-50%, -34px)' }], { duration: 1100, delay: e.at, easing: 'ease-out', fill: 'both' })
+          .onfinish = function(){ label.remove(); };
+        if (e.kind === 'dmg' && !reduceMotion){
+          at.animate([{ transform: 'translateX(0)', filter: 'none' }, { transform: 'translateX(-4px)', filter: 'brightness(1.6)' },
+                      { transform: 'translateX(4px)' }, { transform: 'translateX(0)', filter: 'none' }], { duration: 320, delay: e.at });
+        }
+      }
+    });
+  }
+
+  // Resolves every action due on the current tick (the queue), spotlighting them together.
+  function resolveTick(){
+    if (!state.queue.length) return false;
+    clearFx();
+    state.spotlight = { title: 't' + state.tick, fromSeq: state.logSeq };
+    while (state.phase === 'battle' && resolveNext()){}
+    return true;
+  }
   function frame(now){
     var c = clock;
     if (!c) return;
@@ -430,13 +496,16 @@
       if (state.tick >= SIM_TICKS){ stopClock(); timeUp(); return; }
       state.tick++;
       state.queue = actorsAt(state.tick);
-      if (state.queue.length){
-        stopClock();
-        if (!resolveNext()) startClock();   // everyone queued had already died: keep simming
-        return;
+      if (resolveTick()){
+        if (state.phase !== 'battle'){ playEvents(); return; }   // the round ended (endRound stopped the clock and rendered)
+        // hold so the hits can be read — longer if this tick's animations need it
+        c.frac = Math.min(c.frac, 0) - Math.max(ACTION_HOLD_MS, state.fx.cursor + FX_FLIGHT + 600) / TICK_MS;
+        render();
+        playEvents();
+        break;
       }
     }
-    paintClock(state.tick + c.frac);
+    paintClock(state.tick + Math.max(0, c.frac));
     c.raf = requestAnimationFrame(frame);
   }
   // Updates just the moving parts (charge bars, tick counter, round clock) for a fractional tick t,
@@ -479,7 +548,7 @@
 
   // Every unit on the side (the buffer included) permanently gains `amount` of a stat, stored on its card. Stacks.
   function buffTeam(side, u, field, amount, statName){
-    state.players[side].units.forEach(function(a){ if (a){ a.card[field] = (a.card[field] || 0) + amount; state.fx.healed.push(a); } });
+    state.players[side].units.forEach(function(a, i){ if (a){ a.card[field] = (a.card[field] || 0) + amount; fxFloat(side, i, '+' + amount + ' ' + statName, 'buff'); } });
     say(side, u, 'rallies the team: +' + amount + ' ' + statName + ' for the rest of the game to every unit on its side.', 'heal');
   }
 
@@ -532,7 +601,7 @@
         a.delay = state.tick;
         if (!state.queue.some(function(q){ return q.side === side && q.slot === i; }))
           state.queue.push({ side: side, slot: i, tick: state.tick, prio: priority(side, i) });
-        state.fx.healed.push(a);
+        fxFloat(side, i, 'WARP', 'buff');
         boosted.push(a.card.name);
       });
       state.queue.sort(function(a, b){ return a.prio - b.prio; });
@@ -544,7 +613,7 @@
       if (u.empowerUsed) return frontStrike(side, slot, u, adOf(u));
       u.empowerUsed = true;
       u.roundAd = (u.roundAd || 0) + DYNAMO_EMPOWER_AD;
-      state.fx.healed.push(u);
+      fxFloat(side, slot, '+' + DYNAMO_EMPOWER_AD + ' AD', 'buff');
       say(side, u, 'empowers itself: +' + DYNAMO_EMPOWER_AD + ' AD for the round (now ' + adOf(u) + ').', 'heal');
     },
     // Dynamo · Strike: attack the frontmost enemy for 100% AD
@@ -553,7 +622,7 @@
     generate: function(side, slot, u){
       var p = state.players[side];
       p.energy += 1;
-      state.fx.healed.push(u);
+      fxFloat(side, slot, '+1 ⚡', 'buff');
       say(side, u, 'generates 1 energy (' + p.name + ' now has ⚡' + p.energy + ').', 'heal');
     },
     // Medic · Revive (4 energy), once: bring back the most recently defeated ally whose slot is free, at half HP and
@@ -568,7 +637,7 @@
       back.hp = Math.ceil(back.maxHp / 2);
       back.delay = state.tick;   // zero charge: its next action is a full cooldown away
       p.units[fallen.slot] = back;
-      state.fx.healed.push(back);
+      fxFloat(side, fallen.slot, 'REVIVED', 'heal');
       say(side, u, 'revives ' + fallen.card.name + ' at ' + back.hp + '/' + back.maxHp + ' HP with zero charge!', 'heal');
     },
     // Medic · AD buff for the whole side
@@ -602,7 +671,8 @@
         state.queue = state.queue.filter(function(q){ return !(q.side === dSide && q.slot === best); });
         target.delay = (target.delay || 0) + SABOTAGE_DELAY;
         target.delayed = (target.delayed || 0) + SABOTAGE_DELAY;
-        state.fx.hit.push(target);
+        fxAttack(side, slot, dSide, best);
+        fxFloat(dSide, best, '+' + SABOTAGE_DELAY + ' ticks', 'debuff');
         say(side, u, 'sabotages ' + dp.name + "'s " + target.card.name + ': its next action slips ' + SABOTAGE_DELAY +
           ' ticks, to t' + nextActionTick(dSide, best, target, cooldownOf(dSide, best)) + '.', 'attack');
       },
@@ -622,7 +692,9 @@
           victim.maxHp -= amount; victim.hp = Math.min(victim.hp, victim.maxHp);
           u.maxHp += amount; u.hp += amount;
         }
-        state.fx.hit.push(victim); state.fx.healed.push(u);
+        fxAttack(side, slot, dSide, vi);
+        fxFloat(dSide, vi, '−' + amount + ' ' + st.label, 'debuff');
+        fxFloat(side, slot, '+' + amount + ' ' + st.label, 'buff');
         say(side, u, 'steals ' + amount + ' ' + st.label + ' from ' + dp.name + "'s " + victim.card.name + ', permanently.', 'attack');
         if (victim.hp <= 0) killUnit(dSide, vi);
       },
@@ -655,6 +727,7 @@
     var label = state.players[side].name + "'s " + u.card.name + (opts.what ? ' (' + opts.what + ')' : '');
     var tSlot = target.slot, victim = dp.units[tSlot];
     if (target.taunted) addLog('t' + state.tick + ': ' + dp.name + "'s " + victim.card.name + ' taunts — the attack has to go to it.', 'meta');
+    fxAttack(side, slot, dSide, tSlot);
     var dealt = dealDamage(dSide, tSlot, amount, type, label);
     if (dp.units[tSlot] !== victim && opts.onKill) opts.onKill(victim);
     return dealt;
@@ -672,7 +745,7 @@
     var p = state.players[side], u = p.units[slot];
     var dealt = mitigated(amount, type, side, slot);
     u.hp -= dealt;
-    state.fx.hit.push(u);
+    fxFloat(side, slot, '−' + dealt, 'dmg');
     var note = dealt === amount ? '' : ' (' + amount + ' ' + type + ', ' + (type === 'physical' ? 'armor' : 'MR') + ' blocked ' + (amount - dealt) + ')';
     addLog('t' + state.tick + ': ' + label + ' hits ' + p.name + "'s " + u.card.name + ' for ' + dealt + note + '.', 'attack');
     if (u.hp <= 0) killUnit(side, slot);
@@ -683,6 +756,7 @@
     var p = state.players[side], u = p.units[slot];
     if (!u) return;
     p.units[slot] = null;
+    fxFloat(side, slot, 'DEFEATED', 'dmg');
     state.fallen[side].push({ card: u.card, slot: slot });
     addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' is destroyed.', 'destroy');
   }
@@ -695,7 +769,7 @@
     if (best === -1){ say(side, u, 'has nothing to heal.', 'idle'); return; }
     var o = p.units[best], before = o.hp;
     o.hp = Math.min(o.maxHp, o.hp + amount);
-    state.fx.healed.push(o);
+    fxFloat(side, best, '+' + (o.hp - before), 'heal');
     say(side, u, (what ? '(' + what + ') ' : '') + 'heals ' + o.card.name + ' for ' + (o.hp - before) + '.', 'heal');
   }
 
@@ -768,7 +842,7 @@
     var tip = ab.name + ': ' + ab.text;
     if (canSwitchAbility() && allowedAbilities(card, slot).length > 1)
       return '<button class="ability-btn" type="button" title="' + tip + ' — click to switch ability' +
-        (state.phase === 'battle' ? ' (resets its charge)' : '') + '">' + ab.short + (ab.cost ? ' ⚡' + ab.cost : '') + ' ⇄</button>';
+        (state.phase === 'battle' ? ' (pauses the battle and resets its charge)' : '') + '">' + ab.short + (ab.cost ? ' ⚡' + ab.cost : '') + ' ⇄</button>';
     return '<div class="line hot" title="' + tip + '">' + ab.short + '</div>';
   }
 
@@ -797,7 +871,7 @@
   function renderUnit(side, slot, next){
     var p = state.players[side], u = p.units[slot];
     if (!u){
-      var empty = el('div', 'slot-empty', {});
+      var empty = el('div', 'slot-empty', { 'data-unit': side + '-' + slot });
       empty.innerHTML = prioBadge(side, slot);
       return empty;
     }
@@ -808,10 +882,8 @@
     var cdPct = state.phase === 'battle' && isFinite(cd) ? chargeAt(u, state.tick, cd) : 0;
     var arm = armorOf(side, slot), mr = mrOf(side, slot);
     var buffed = arm !== card.armor || cd !== card.cooldown;
-    // one animation per tile: being hit wins over being healed, which wins over acting
-    var fx = state.fx.hit.indexOf(u) !== -1 ? ' hit' : state.fx.healed.indexOf(u) !== -1 ? ' healed' : state.fx.acted.indexOf(u) !== -1 ? ' acted' : '';
-    var tile = el('div', 'tile r-' + card.role + (isNext && !clock ? ' next' : '') + fx, {
-      tabindex: '0', role: 'button', title: card.name
+    var tile = el('div', 'tile r-' + card.role + (isNext && !clock ? ' next' : ''), {
+      'data-unit': side + '-' + slot, tabindex: '0', role: 'button', title: card.name
     });
     tile.innerHTML = prioBadge(side, slot) + (isNext ? '<div class="next-tag">NEXT</div>' : '') +
       '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u, slot) + statusLine(u) +
@@ -912,7 +984,7 @@
     var onBoard = !!(u && u.card === ins.card);
     var pickable = onBoard && canSwitchAbility() && allowedAbilities(ins.card, ins.slot).length > 1;
     var html = cardInfoHtml(ins.card, onBoard ? u.ability : undefined, pickable, onBoard ? ins.slot : undefined);
-    if (pickable && state.phase === 'battle') html += '<div class="inspector-live">Click an ability to switch — this resets its charge.</div>';
+    if (pickable && state.phase === 'battle') html += '<div class="inspector-live">Click an ability to switch — this pauses the battle and resets its charge.</div>';
     if (u && u.card === ins.card){
       var live = ['On ' + state.players[ins.side].name + "'s board", SLOT_NAMES[ins.slot] + ' slot', 'Turn order #' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,
                   'ARM ' + armorOf(ins.side, ins.slot) + ' · MR ' + mrOf(ins.side, ins.slot)];
@@ -949,8 +1021,7 @@
     document.getElementById('nextPill').hidden = !next;
     if (next) document.getElementById('nextLabel').textContent = state.players[next.side].name + "'s " + state.players[next.side].units[next.slot].card.name + ' @ t' + next.tick;
     var main = document.getElementById('mainBtn');
-    main.textContent = state.phase === 'setup' ? 'Start battle' : state.phase === 'battle' ? (clock ? 'Simming…' : 'Continue ▶') : 'Next round';
-    main.disabled = !!clock;
+    main.textContent = state.phase === 'setup' ? 'Start battle' : state.phase === 'battle' ? (clock ? 'Pause ❚❚' : 'Resume ▶') : 'Next round';
   }
 
   function renderAction(){
@@ -959,9 +1030,8 @@
     var sp = state.spotlight;
     panel.className = 'action-panel' + (sp && sp.side != null ? ' p' + (sp.side + 1) : '');
     if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Your units are dealt. Choose each one\'s ability (⇄ on the card, or in Card Info), then start the battle.</div>'; return; }
-    if (clock){ body.innerHTML = '<div class="action-wait">Simming… waiting for the next unit to act.</div>'; return; }
     body.innerHTML = '';
-    if (!sp) return;
+    if (!sp){ body.innerHTML = '<div class="action-wait">' + (clock ? 'Simming…' : 'Paused.') + '</div>'; return; }
     body.appendChild(el('div', 'action-title', {})).textContent = sp.title;
     state.log.forEach(function(entry){
       if (entry.seq >= sp.fromSeq) body.appendChild(el('div', 'action-line ' + entry.type, {})).textContent = entry.text.replace(/^t\d+: /, '');
@@ -980,10 +1050,16 @@
 
   document.getElementById('mainBtn').addEventListener('click', function(){
     if (state.phase === 'setup') startBattle();
-    else if (state.phase === 'battle') continueBattle();
+    else if (state.phase === 'battle') togglePause();
     else nextRound();
   });
   document.getElementById('resetBtn').addEventListener('click', newGame);
+  // Space works the main button (start / pause / resume / next round), unless a control has focus
+  document.addEventListener('keydown', function(e){
+    if (e.key !== ' ' || e.target.closest('button, a, [role="button"], input, select, textarea')) return;
+    e.preventDefault();
+    document.getElementById('mainBtn').click();
+  });
 
   newGame();
 })();
