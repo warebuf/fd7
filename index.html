@@ -35,7 +35,7 @@
     display:grid; grid-template-columns:18px 18px minmax(0,1fr) repeat(6, 32px); align-items:center; column-gap:4px;
     padding:3px 8px; font-size:.74rem;
   }
-  .deck-row{ border-radius:6px; background:var(--panel-2); border-left:3px solid var(--role); cursor:pointer; }
+  .deck-row{ border-radius:6px; background:var(--panel-2); border-left:3px solid var(--role); }
   .deck-cols{ padding-top:0; padding-bottom:2px; border-left:3px solid transparent; font-size:.58rem; letter-spacing:.05em; color:var(--text-dim); }
   .deck-cols span, .deck-row .num{ text-align:right; }
   .deck-row .nm{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -47,9 +47,6 @@
   .deck-row.r-healer{ --role:var(--heal); }
   .deck-row.r-support{ --role:var(--support); }
   .deck-row .pos{ color:var(--text-dim); font-size:.66rem; }
-  .deck-row.selected{ background:var(--side-bg); outline:2px solid var(--side); outline-offset:-1px; }
-  .deck-row.placed{ opacity:.45; cursor:default; }
-  .deck-row.discarded{ opacity:.55; }
 
   /* card tiles, used for board units and empty slots */
   .tile{
@@ -75,7 +72,6 @@
   .tile .name{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.76rem; text-align:center; line-height:1.1; }
   .tile .line{ font-size:.64rem; color:var(--text-dim); }
   .tile .line.hot{ color:var(--role); font-weight:600; }
-  .tile.selected{ outline:2px solid var(--side); outline-offset:2px; background:var(--side-bg); }
   .tile.next{ box-shadow:0 0 0 2px var(--side); }
   .next-tag{
     position:absolute; top:-8px; left:50%; transform:translateX(-50%); font-family:'Chakra Petch',sans-serif;
@@ -124,7 +120,6 @@
     position:relative; width:92px; min-height:118px; border-radius:10px; border:1px dashed var(--line); color:var(--text-dim);
     display:flex; align-items:center; justify-content:center; font-size:1.3rem;
   }
-  .slot-empty.valid{ border-color:var(--side); color:var(--side); background:var(--side-bg); cursor:pointer; }
   .empty-note{ font-size:.72rem; color:var(--text-dim); font-style:italic; }
 
   .center-col{ display:flex; flex-direction:column; gap:10px; min-height:0; }
@@ -160,7 +155,6 @@
     <span class="pill" id="nextPill" hidden>Next: <b id="nextLabel"></b></span>
     <span class="spacer"></span>
     <button class="btn primary" id="mainBtn">Start battle</button>
-    <a class="btn ghost small" href="decks.html">Decks</a>
     <button class="btn ghost small" id="resetBtn">New game</button>
   </div>
 </header>
@@ -198,49 +192,24 @@
     for (var k in def) c[k] = def[k];
     return c;
   }
-  function buildDeck(recipe){
-    var deck = [];
-    Object.keys(recipe).forEach(function(k){ for (var i = 0; i < recipe[k]; i++) deck.push(makeCard(k)); });
-    return deck;
-  }
-  function shuffle(arr){
-    for (var i = arr.length - 1; i > 0; i--){
-      var j = Math.floor(Math.random() * (i + 1));
-      var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-    }
-    return arr;
-  }
-  // A hand is shown grouped by card type, which makes it easier to scan.
-  function sortCards(cards){
-    var keys = Object.keys(CARD_DEFS);
-    return cards.sort(function(a, b){ return keys.indexOf(a.key) - keys.indexOf(b.key); });
-  }
-  function newPlayer(name, recipe){
-    return { name: name, deck: shuffle(buildDeck(recipe)), hand: [], discard: [], energy: 0, units: new Array(UNIT_SLOTS).fill(null) };
-  }
-  // Each round a player draws HAND_SIZE random cards and fields up to UNIT_SLOTS of them. If the deck is too thin to draw
-  // a full hand, the discard pile is shuffled back in first.
-  function drawHand(p){
-    if (p.deck.length < HAND_SIZE && p.discard.length){
-      p.deck = shuffle(p.deck.concat(p.discard));
-      p.discard = [];
-      addLog(p.name + ' is running low — the discard pile is shuffled back into the deck.', 'meta');
-    }
-    p.hand = sortCards(p.deck.splice(0, HAND_SIZE));
+  // Each player owns one persistent card of every unit type — their roster. Every round they field up to UNIT_SLOTS
+  // units from it, any number of copies of the same type. Permanent bonuses (trophies, buffs, steals) stay on those
+  // cards all game, shared by every copy of that type.
+  function newPlayer(name){
+    var roster = Object.keys(CARD_DEFS).map(makeCard);
+    return { name: name, roster: roster, energy: 0, units: new Array(UNIT_SLOTS).fill(null) };
   }
   function newGame(){
     stopClock();
-    var recipes = loadDeckRecipes();
     state = {
       round: 1, phase: 'setup', tick: 0, roundWins: [0, 0], log: [], logSeq: 0, queue: [],
       fx: { acted: [], hit: [], healed: [] },   // units to animate on the next render
       spotlight: null,  // { title, side, fromSeq } — the action panel shows log lines from fromSeq on
-      selected: null,   // { side, pos } of the hand card being placed
       inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
-      players: [newPlayer('Player 1', recipes[0]), newPlayer('Player 2', recipes[1])]
+      players: [newPlayer('Player 1'), newPlayer('Player 2')]
     };
-    state.players.forEach(drawHand);
-    addLog('Round 1: each player draws ' + HAND_SIZE + ', fields up to ' + UNIT_SLOTS + ' and chooses each one\'s ability, then start the battle.', 'meta');
+    addLog('Round 1: each player is dealt ' + UNIT_SLOTS + ' random units in random slots — choose their abilities, then start the battle.', 'meta');
+    dealUnits();
     logTurnOrder();
     render();
   }
@@ -250,36 +219,30 @@
     if (state.log.length > 300) state.log.shift();
   }
 
-  // ---------- Setup phase: fielding cards from your hand ----------
-  function isOnBoard(p, card){ return p.units.some(function(u){ return u && u.card === card; }); }
-
-  function onPickClick(side, pos){
-    var p = state.players[side], card = p.hand[pos];
-    if (!card) return;
-    state.inspected = { card: card, side: side };
-    if (state.phase === 'setup' && !isOnBoard(p, card)){
-      var sel = state.selected;
-      state.selected = (sel && sel.side === side && sel.pos === pos) ? null : { side: side, pos: pos };
-    }
-    render();
-  }
-  function onPickDoubleClick(side, pos){
-    var p = state.players[side];
-    if (state.phase !== 'setup' || !p.hand[pos] || isOnBoard(p, p.hand[pos])) return;
-    var slot = p.units.indexOf(null);
-    if (slot !== -1) placeUnit(side, pos, slot);
+  // ---------- Setup phase: units are dealt ----------
+  // Every round each player is dealt UNIT_SLOTS random units from their roster (duplicates possible), placed
+  // into random slots. Copies share their roster card, so permanent bonuses (trophies, buffs, steals) apply to
+  // every copy of that unit type. Players only choose abilities.
+  function countOnBoard(p, card){ return p.units.filter(function(u){ return u && u.card === card; }).length; }
+  function dealUnits(){
+    state.players.forEach(function(p){
+      p.units = p.units.map(function(_, slot){
+        var card = p.roster[Math.floor(Math.random() * p.roster.length)];
+        return newUnit(card, slot);
+      });
+      // a remembered costed ability the player can't afford falls back to a free one
+      p.units.forEach(function(u, slot){
+        if (energyLeft(p) >= 0 || !abilityCost(u.card, u.ability)) return;
+        var free = allowedAbilities(u.card, slot).filter(function(ab){ return !ab.cost; })[0];
+        u.ability = free ? free.id : null;
+      });
+    });
   }
   function onSlotClick(side, slot){
-    var p = state.players[side];
-    var u = p.units[slot];
-    if (u){
-      state.inspected = { card: u.card, side: side, slot: slot };
-      // during setup, clicking a placed unit takes it back off the board
-      if (state.phase === 'setup'){ p.units[slot] = null; state.selected = null; }
-      render();
-      return;
-    }
-    if (state.phase === 'setup' && state.selected && state.selected.side === side) placeUnit(side, state.selected.pos, slot);
+    var u = state.players[side].units[slot];
+    if (!u) return;
+    state.inspected = { card: u.card, side: side, slot: slot };
+    render();
   }
   // A placed unit starts with the ability its card used last time if it is usable from this slot, otherwise
   // its first ability that is. With none usable from this slot (e.g. a Predator out of the back), ability is
@@ -337,25 +300,6 @@
       if (setAbility(side, slot, list[(i + step) % list.length].id)) return;
     }
   }
-  function placeUnit(side, pos, slot){
-    var p = state.players[side];
-    var card = p.hand[pos];
-    p.units[slot] = newUnit(card, slot);
-    // over budget? fall back to a free ability, and if the card itself costs too much, don't place it
-    if (energyLeft(p) < 0){
-      var free = allowedAbilities(card, slot).filter(function(ab){ return !ab.cost; })[0];
-      p.units[slot].ability = free ? free.id : null;
-    }
-    if (energyLeft(p) < 0){
-      p.units[slot] = null;
-      addLog(p.name + ' needs ' + card.cost + ' energy to field ' + card.name + ' (has ' + energyLeft(p) + ').', 'meta');
-      render();
-      return;
-    }
-    state.selected = null;
-    state.inspected = { card: card, side: side, slot: slot };
-    render();
-  }
 
   // ---------- Battle ----------
   function startBattle(){
@@ -363,9 +307,6 @@
     state.phase = 'battle';
     state.tick = 0;
     state.queue = [];
-    state.selected = null;
-    // the cards fielded this round go to the discard pile afterwards, whether they survive or not
-    state.fielded = state.players.map(function(p){ return p.units.filter(Boolean).map(function(u){ return u.card; }); });
     state.fallen = [[], []];   // units defeated this round, newest last, for Revive
     state.players.forEach(function(p){
       var cost = plannedCost(p);
@@ -686,7 +627,9 @@
         if (victim.hp <= 0) killUnit(dSide, vi);
       },
     // Warden · Taunt is passive (never acted out) — see chooseTarget
-    taunt: function(){}
+    taunt: function(){},
+    // Any unit · No action (passive: never acted out)
+    none: function(){}
   };
 
   // Who does an attack on dp hit? The frontmost unit (front slot, else middle, else back) by default, or a
@@ -793,25 +736,18 @@
     state.phase = 'roundEnd';
     render();
   }
-  // Every round is a fresh fight: the board clears, the cards each player fielded — alive or dead — go to their
-  // discard pile, the rest of the hand is shuffled back into the deck, and a new hand is drawn.
+  // Every round is a fresh fight: the board clears and each player picks again from their full roster.
   function nextRound(){
     if (state.phase !== 'roundEnd') return;
-    state.players.forEach(function(p, side){
-      var used = state.fielded[side];
-      p.discard = p.discard.concat(used);
-      p.deck = shuffle(p.deck.concat(p.hand.filter(function(c){ return used.indexOf(c) === -1; })));
-      p.hand = [];
-      p.units = new Array(UNIT_SLOTS).fill(null);
-    });
+    state.players.forEach(function(p){ p.units = new Array(UNIT_SLOTS).fill(null); });
     state.round++;
     state.tick = 0;
     state.spotlight = null;
     clearFx();
     state.phase = 'setup';
     state.inspected = null;
-    addLog('Round ' + state.round + ': fielded units go to the discard pile, the rest of each hand is shuffled back, and each player draws ' + HAND_SIZE + '.', 'meta');
-    state.players.forEach(drawHand);
+    addLog('Round ' + state.round + ': the board clears and each player is dealt ' + UNIT_SLOTS + ' new random units.', 'meta');
+    dealUnits();
     logTurnOrder();
     render();
   }
@@ -861,10 +797,8 @@
   function renderUnit(side, slot, next){
     var p = state.players[side], u = p.units[slot];
     if (!u){
-      var valid = state.phase === 'setup' && state.selected && state.selected.side === side;
-      var empty = el('div', 'slot-empty' + (valid ? ' valid' : ''), valid ? { tabindex: '0', role: 'button', 'aria-label': 'Place here' } : {});
-      empty.innerHTML = prioBadge(side, slot) + '+';
-      empty.addEventListener('click', function(){ onSlotClick(side, slot); });
+      var empty = el('div', 'slot-empty', {});
+      empty.innerHTML = prioBadge(side, slot);
       return empty;
     }
     var card = u.card;
@@ -877,7 +811,7 @@
     // one animation per tile: being hit wins over being healed, which wins over acting
     var fx = state.fx.hit.indexOf(u) !== -1 ? ' hit' : state.fx.healed.indexOf(u) !== -1 ? ' healed' : state.fx.acted.indexOf(u) !== -1 ? ' acted' : '';
     var tile = el('div', 'tile r-' + card.role + (isNext && !clock ? ' next' : '') + fx, {
-      tabindex: '0', role: 'button', title: card.name + (state.phase === 'setup' ? ' — click to take it off the board' : '')
+      tabindex: '0', role: 'button', title: card.name
     });
     tile.innerHTML = prioBadge(side, slot) + (isNext ? '<div class="next-tag">NEXT</div>' : '') +
       '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u, slot) + statusLine(u) +
@@ -910,21 +844,14 @@
     return head;
   }
 
-  // Every card in the hand is a row you can field during setup; it fades once it is on the board.
-  function renderHandRow(side, pos){
-    var p = state.players[side], card = p.hand[pos];
-    var placed = isOnBoard(p, card);
-    var sel = state.selected && state.selected.side === side && state.selected.pos === pos;
-    var row = el('div', 'deck-row r-' + card.role + (sel ? ' selected' : '') + (placed ? ' placed' : ''), {
-      tabindex: '0', role: 'button',
-      title: card.name + (placed ? ' (on the board)' : state.phase === 'setup' ? ' — click to select, double-click to place' : '')
-    });
+  // The roster is a reference list (hover for Card Info): units are dealt from it at random each round.
+  function renderRosterRow(side, pos){
+    var p = state.players[side], card = p.roster[pos];
+    var placed = countOnBoard(p, card);
+    var row = el('div', 'deck-row r-' + card.role, { tabindex: '0', title: card.name });
     row.innerHTML = '<span class="pos mono"></span><span>' + card.icon + '</span>' +
-      '<span class="nm">' + card.name + (card.cost ? '<small>⚡' + card.cost + '</small>' : '') + (placed ? '<small>ON BOARD</small>' : '') + '</span>' + statCells(card);
-    row.addEventListener('click', function(){ onPickClick(side, pos); });
+      '<span class="nm">' + card.name + (card.cost ? '<small>⚡' + card.cost + '</small>' : '') + (placed ? '<small>×' + placed + ' ON BOARD</small>' : '') + '</span>' + statCells(card);
     hoverInspect(row, function(){ return { card: card, side: side }; });
-    row.addEventListener('dblclick', function(){ onPickDoubleClick(side, pos); });
-    row.addEventListener('keydown', function(e){ if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); onPickClick(side, pos); } });
     return row;
   }
 
@@ -939,8 +866,6 @@
     var panel = document.getElementById('panel-' + side);
     panel.innerHTML =
       '<div class="panel-head"><div class="panel-title">' + p.name + '</div>' +
-      '<span class="pill mono" title="Cards left in your deck (drawn at random)">Deck ' + p.deck.length + '</span>' +
-      '<span class="pill mono" title="Cards in the discard pile">Discard ' + p.discard.length + '</span>' +
       energyPill(p) + '</div>';
     var unitsSec = panel.appendChild(el('div', '', {}));
     // Slots are drawn facing the middle of the screen: the left player's run Back · Middle · Front, the right
@@ -954,26 +879,10 @@
 
     var deckSec = panel.appendChild(el('div', 'deck-section', {}));
     var picksWrap = deckSec.appendChild(el('div', '', {}));
-    picksWrap.appendChild(el('div', 'row-label', {})).textContent = 'Your hand — ' + p.hand.length + ' drawn, field up to ' + UNIT_SLOTS;
+    picksWrap.appendChild(el('div', 'row-label', {})).textContent = 'Your roster — ' + UNIT_SLOTS + ' are dealt at random each round';
     var picks = picksWrap.appendChild(el('div', 'deck-list', {}));
-    if (p.hand.length) picks.appendChild(statHeader());
-    else picks.appendChild(el('div', 'empty-note', {})).textContent = 'No cards in hand.';
-    for (var i = 0; i < p.hand.length; i++) picks.appendChild(renderHandRow(side, i));
-    deckSec.appendChild(el('div', 'empty-note', {})).textContent = p.deck.length + ' card' + (p.deck.length === 1 ? '' : 's') + ' left in your deck, drawn at random.';
-    if (p.discard.length){
-      var discWrap = deckSec.appendChild(el('div', '', {}));
-      discWrap.appendChild(el('div', 'row-label', {})).textContent = 'Discard pile — most recent first';
-      var dlist = discWrap.appendChild(el('div', 'deck-list', {}));
-      p.discard.slice().reverse().forEach(function(card){ dlist.appendChild(renderDiscardRow(side, card)); });
-    }
-  }
-
-  function renderDiscardRow(side, card){
-    var row = el('div', 'deck-row discarded r-' + card.role, { tabindex: '0', role: 'button', title: card.name + ' — in the discard pile' });
-    row.innerHTML = '<span class="pos mono">–</span><span>' + card.icon + '</span><span class="nm">' + card.name + '</span>' + statCells(card);
-    row.addEventListener('click', function(){ state.inspected = { card: card, side: side }; render(); });
-    hoverInspect(row, function(){ return { card: card, side: side }; });
-    return row;
+    picks.appendChild(statHeader());
+    for (var i = 0; i < p.roster.length; i++) picks.appendChild(renderRosterRow(side, i));
   }
 
   // Hovering (or focusing) a card shows it in Card Info. Only the Card Info panel is redrawn, so the board
@@ -1049,7 +958,7 @@
     var body = document.getElementById('actionBody');
     var sp = state.spotlight;
     panel.className = 'action-panel' + (sp && sp.side != null ? ' p' + (sp.side + 1) : '');
-    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Field up to ' + UNIT_SLOTS + ' units from your hand of ' + HAND_SIZE + ' and choose each one\'s ability (⇄ on the card, or in Card Info), then start the battle.</div>'; return; }
+    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Your units are dealt. Choose each one\'s ability (⇄ on the card, or in Card Info), then start the battle.</div>'; return; }
     if (clock){ body.innerHTML = '<div class="action-wait">Simming… waiting for the next unit to act.</div>'; return; }
     body.innerHTML = '';
     if (!sp) return;

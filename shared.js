@@ -55,9 +55,12 @@ var CARD_DEFS = {
     ] }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).
+// Every unit also gets a final "No action" option: chosen, it just stands there for the round and never acts.
+var NO_ACTION = { id:'none', name:'No action', short:'NO ACTION', passive:true, text:'Does nothing this round.' };
 Object.keys(CARD_DEFS).forEach(function(k){
   var c = CARD_DEFS[k];
   c.cooldown = c.as > 0 ? Math.round(TICKS_PER_SECOND / c.as) : Infinity;
+  c.abilities.push(NO_ACTION);
 });
 
 var DECK_SIZE = 9;   // every deck is exactly this many cards
@@ -68,7 +71,6 @@ var MAX_COPIES = 6;
 // back to front.
 var SLOT_NAMES = ['Front', 'Front', 'Middle', 'Back'];
 var SLOT_LINES = ['front', 'front', 'middle', 'back'];
-var HAND_SIZE = 5;   // each round you draw this many cards and field up to one per board slot
 var DECK_STORAGE_KEY = 'fd7-deck-recipes';
 
 function el(tag, cls, attrs){
