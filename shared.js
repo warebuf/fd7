@@ -6,6 +6,7 @@
 //   ap     ability power — Medic heals for this
 //   armor  reduces physical damage, mr (magic resist) reduces magic damage: taken = dmg × 100 / (100 + resist)
 //   as     attack speed — actions per second, one second being TICKS_PER_SECOND ticks (0 = never acts)
+// `prefers` is the line ('front', 'middle', 'back') a unit is placed on first when the board is filled each round.
 // Every unit has a list of `abilities`; each round its owner picks which one it uses (ids resolve in ABILITIES in
 // index.html). An ability with `lines` can only be used from slots on those lines ('front', 'middle', 'back');
 // a `passive` one is never acted out — it works just by the unit being on the board (Warden's Taunt).
@@ -13,26 +14,26 @@
 var TICKS_PER_SECOND = 10;
 
 var CARD_DEFS = {
-  striker:   { key:'striker',   name:'Striker',   icon:'⚔', role:'attacker', hp:30, ad:10, ap:0,  armor:15, mr:10, as:0.5,
+  striker:   { key:'striker',   name:'Striker',   icon:'⚔', role:'attacker', prefers:'front', hp:30, ad:10, ap:0,  armor:15, mr:10, as:0.5,
     abilities:[
       { id:'heavy',   name:'Heavy attack', short:'HEAVY',   text:'Hits a random enemy for 150% of its AD.' },
       { id:'execute', name:'Execute',      short:'EXECUTE', text:'Attack the most damaged enemy (lowest HP %) for 100% AD.' }
     ] },
-  medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer',   hp:50, ad:0,  ap:10, armor:5, mr:25, as:1,
+  medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer', prefers:'middle',   hp:50, ad:0,  ap:10, armor:5, mr:25, as:1,
     abilities:[
       { id:'heal',   name:'Heal',    short:'HEAL', text:'Heals your weakest ally for 100% AP.' },
       { id:'adbuff', name:'AD buff', short:'+AD',  text:'Gives every friendly on-field unit +3 AD permanently.' },
     ] },
-  predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', hp:30, ad:14, ap:0,  armor:10, mr:10, as:0.5,
+  predator:  { key:'predator',  name:'Predator',  icon:'♦', role:'attacker', prefers:'back', hp:30, ad:14, ap:0,  armor:10, mr:10, as:0.5,
     abilities:[
       { id:'trophy', name:'Trophy', short:'TROPHY', lines:['back'], text:'Attack the frontmost enemy for 100% AD. If this ability kills the target, permanently gain +2 AD.' },
       { id:'flank',  name:'Flank',  short:'FLANK',  text:'Attacks the backmost enemy for 50% AD.' }
     ] },
-  warden:    { key:'warden',    name:'Warden',    icon:'⛉', role:'support',  hp:40, ad:0,  ap:0,  armor:40, mr:30, as:0.5,
+  warden:    { key:'warden',    name:'Warden',    icon:'⛉', role:'support', prefers:'front',  hp:40, ad:0,  ap:0,  armor:40, mr:30, as:0.5,
     abilities:[
       { id:'taunt', name:'Taunt', short:'TAUNT', passive:true, text:'Never acts. While Warden lives, every enemy attack must target it.' }
     ] },
-  saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:32, ad:0,  ap:0,  armor:25, mr:25, as:0.5,
+  saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support', prefers:'back',  hp:32, ad:0,  ap:0,  armor:25, mr:25, as:0.5,
     abilities:[
       { id:'sabotage', name:'Sabotage', short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
       { id:'steal',    name:'Steal',    short:'STEAL', lines:['back'], text:'Steals 10% of a random stat from a random enemy, permanently.' }
@@ -47,8 +48,9 @@ Object.keys(CARD_DEFS).forEach(function(k){
   c.abilities.push(NO_ACTION);
 });
 
-var DECK_SIZE = 9;   // every deck is exactly this many cards
-var DEFAULT_RECIPE = { striker:2, medic:2, predator:2, warden:2, saboteur:1 };
+var DECK_SIZE = 12;   // every deck is exactly this many cards
+var HAND_SIZE = 6;    // cards drawn each round; 4 of them are placed (see autoPlace in index.html)
+var DEFAULT_RECIPE = { striker:3, medic:3, predator:2, warden:2, saboteur:2 };
 var MAX_COPIES = 6;
 // The board slots by index, front to back: two front-line slots, one middle, one back. Attacks land on the
 // frontmost unit by default. On screen each side's front faces the middle, so the left player's board is drawn
@@ -99,6 +101,7 @@ function cardInfoHtml(card, activeId, pickable, slot){
   var count = card.abilities.length;
   return '<div class="inspector-title"><div class="inspector-icon">' + card.icon + '</div>' +
     '<div><div class="inspector-name">' + card.name + '</div><div class="inspector-role">' + roleLabel(card) +
+    (card.prefers ? ' · prefers the ' + card.prefers : '') +
     (count > 1 ? ' · choose 1 of ' + count + ' abilities' : '') + '</div></div></div>' +
     '<div class="inspector-stats">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
     effect;

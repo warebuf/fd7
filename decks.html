@@ -110,7 +110,7 @@
     var row = el('div', 'row-card r-' + card.role, {});
     row.innerHTML =
       '<div class="icon">' + card.icon + '</div>' +
-      '<div class="info"><div class="name">' + card.name + '<small>' + roleLabel(card) + '</small></div>' +
+      '<div class="info"><div class="name">' + card.name + '<small>' + roleLabel(card) + (card.prefers ? ' · prefers the ' + card.prefers : '') + '</small></div>' +
       (withDetails
         ? '<div class="pills">' + statList(card).map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
           '<div class="fx">' + (card.abilities.length > 1 ? 'Abilities (pick 1, switchable mid-battle): ' : 'Ability: ') +
@@ -148,7 +148,10 @@
 
   document.getElementById('deckTab0').addEventListener('click', function(){ side = 0; render(); });
   document.getElementById('deckTab1').addEventListener('click', function(){ side = 1; render(); });
-  document.getElementById('deckCopy').addEventListener('click', function(){ recipes[side] = JSON.parse(JSON.stringify(recipes[1 - side])); render(); });
+  document.getElementById('deckCopy').addEventListener('click', function(){
+    recipes[side] = JSON.parse(JSON.stringify(recipes[1 - side]));
+    render();
+  });
   document.getElementById('deckDefault').addEventListener('click', function(){ recipes[side] = defaultRecipe(); render(); });
   document.getElementById('deckClear').addEventListener('click', function(){ recipes[side] = emptyRecipe(); render(); });
   document.getElementById('deckApply').addEventListener('click', function(){

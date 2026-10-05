@@ -39,6 +39,7 @@
   .deck-row .nm{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .deck-row .nm small{ color:var(--side); font-size:.6rem; font-weight:600; margin-left:5px; letter-spacing:.04em; }
   .deck-row .num{ font-size:.68rem; }
+  .deck-row.benched{ opacity:.55; }
   .deck-row .num.zero{ color:var(--text-dim); opacity:.5; }
   .deck-row .num.key{ color:var(--role); font-weight:600; }
   .deck-row.r-attacker{ --role:var(--danger); }
@@ -149,6 +150,7 @@
     <span class="pill" id="nextPill" hidden>Next: <b id="nextLabel"></b></span>
     <span class="spacer"></span>
     <button class="btn primary" id="mainBtn">Start battle</button>
+    <a class="btn ghost small" href="decks.html">Decks</a>
     <button class="btn ghost small" id="resetBtn">New game</button>
   </div>
 </header>
@@ -186,23 +188,33 @@
     for (var k in def) c[k] = def[k];
     return c;
   }
-  // Each player owns one persistent card of every unit type — their roster. Every round they field up to UNIT_SLOTS
-  // units from it, any number of copies of the same type. Permanent bonuses (trophies, buffs, steals) stay on those
-  // cards all game, shared by every copy of that type.
-  function newPlayer(name){
-    var roster = Object.keys(CARD_DEFS).map(makeCard);
-    return { name: name, roster: roster, units: new Array(UNIT_SLOTS).fill(null) };
+  function shuffle(arr){
+    for (var i = arr.length - 1; i > 0; i--){
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    }
+    return arr;
+  }
+  function buildDeck(recipe){
+    var deck = [];
+    Object.keys(recipe).forEach(function(k){ for (var i = 0; i < recipe[k]; i++) deck.push(makeCard(k)); });
+    return shuffle(deck);
+  }
+  // Each player has a shuffled 12-card deck.
+  function newPlayer(name, recipe){
+    return { name: name, deck: buildDeck(recipe), hand: [], discard: [], units: new Array(UNIT_SLOTS).fill(null) };
   }
   function newGame(){
     stopClock();
+    var recipes = loadDeckRecipes();
     state = {
       round: 1, phase: 'setup', tick: 0, roundWins: [0, 0], log: [], logSeq: 0, queue: [],
       fx: newFx(),      // animations recorded this tick, played after the board redraws
       spotlight: null,  // { title, side, fromSeq } — the action panel shows log lines from fromSeq on
       inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
-      players: [newPlayer('Player 1'), newPlayer('Player 2')]
+      players: [newPlayer('Player 1', recipes[0]), newPlayer('Player 2', recipes[1])]
     };
-    addLog('Round 1: each player is dealt ' + UNIT_SLOTS + ' random units in random slots — choose their abilities, then start the battle.', 'meta');
+    addLog('Round 1: each player draws ' + HAND_SIZE + ' and ' + UNIT_SLOTS + ' are placed, preferred positions first. Switch abilities if you like, then start the battle.', 'meta');
     dealUnits();
     logTurnOrder();
     render();
@@ -213,18 +225,33 @@
     if (state.log.length > 300) state.log.shift();
   }
 
-  // ---------- Setup phase: units are dealt ----------
-  // Every round each player is dealt UNIT_SLOTS random units from their roster (duplicates possible), placed
-  // into random slots. Copies share their roster card, so permanent bonuses (trophies, buffs, steals) apply to
-  // every copy of that unit type. Players only choose abilities.
-  function countOnBoard(p, card){ return p.units.filter(function(u){ return u && u.card === card; }).length; }
-  function dealUnits(){
-    state.players.forEach(function(p){
-      p.units = p.units.map(function(_, slot){
-        var card = p.roster[Math.floor(Math.random() * p.roster.length)];
-        return newUnit(card, slot);
-      });
+  // ---------- Setup phase: draw, then place by preference ----------
+  // Each round a player draws HAND_SIZE cards (the discard pile is shuffled back in first if the deck is too thin).
+  // Then the board fills in two passes: first, each slot (front to back) takes a drawn card that prefers its line;
+  // then any slot still empty takes whatever is left. Ties between cards are broken at random. The rest sit on
+  // the bench this round.
+  function drawHand(p){
+    if (p.deck.length < HAND_SIZE && p.discard.length){
+      p.deck = shuffle(p.deck.concat(p.discard));
+      p.discard = [];
+      addLog(p.name + ' is running low — the discard pile is shuffled back into the deck.', 'meta');
+    }
+    p.hand = p.deck.splice(0, HAND_SIZE);
+  }
+  function autoPlace(p){
+    var left = shuffle(p.hand.slice());
+    p.units = new Array(UNIT_SLOTS).fill(null);
+    SLOT_LINES.forEach(function(line, slot){
+      var at = left.findIndex(function(c){ return c.prefers === line; });
+      if (at !== -1) p.units[slot] = newUnit(left.splice(at, 1)[0], slot);
     });
+    SLOT_LINES.forEach(function(line, slot){
+      if (!p.units[slot] && left.length) p.units[slot] = newUnit(left.shift(), slot);
+    });
+  }
+  function onBoard(p, card){ return p.units.some(function(u){ return u && u.card === card; }); }
+  function dealUnits(){
+    state.players.forEach(function(p){ drawHand(p); autoPlace(p); });
   }
   function onSlotClick(side, slot){
     var u = state.players[side].units[slot];
@@ -278,6 +305,7 @@
     state.phase = 'battle';
     state.tick = 0;
     state.queue = [];
+    state.fielded = [].concat.apply([], state.players.map(function(p){ return p.units.filter(Boolean).map(function(u){ return u.card; }); }));
     state.spotlight = { title: 'Battle begins', fromSeq: state.logSeq };
     addLog('Round ' + state.round + ': battle begins.', 'meta');
     if (!checkForWipe()) startClock();   // a side that fielded no units loses on the spot
@@ -705,17 +733,24 @@
     state.phase = 'roundEnd';
     render();
   }
-  // Every round is a fresh fight: the board clears and each player picks again from their full roster.
+  // Every round is a fresh fight: the cards that were fielded (alive or dead) go to the discard pile, the bench is
+  // shuffled back into the deck, and a new hand is drawn and placed.
   function nextRound(){
     if (state.phase !== 'roundEnd') return;
-    state.players.forEach(function(p){ p.units = new Array(UNIT_SLOTS).fill(null); });
+    state.players.forEach(function(p){
+      var fielded = p.hand.filter(function(c){ return onBoard(p, c) || state.fielded.indexOf(c) !== -1; });
+      p.discard = p.discard.concat(fielded);
+      p.deck = shuffle(p.deck.concat(p.hand.filter(function(c){ return fielded.indexOf(c) === -1; })));
+      p.hand = [];
+      p.units = new Array(UNIT_SLOTS).fill(null);
+    });
     state.round++;
     state.tick = 0;
     state.spotlight = null;
     clearFx();
     state.phase = 'setup';
     state.inspected = null;
-    addLog('Round ' + state.round + ': the board clears and each player is dealt ' + UNIT_SLOTS + ' new random units.', 'meta');
+    addLog('Round ' + state.round + ': fielded units go to the discard pile, the bench is shuffled back, and each player draws ' + HAND_SIZE + '.', 'meta');
     dealUnits();
     logTurnOrder();
     render();
@@ -808,14 +843,15 @@
     return head;
   }
 
-  // The roster is a reference list (hover for Card Info): units are dealt from it at random each round.
-  function renderRosterRow(side, pos){
-    var p = state.players[side], card = p.roster[pos];
-    var placed = countOnBoard(p, card);
-    var row = el('div', 'deck-row r-' + card.role, { tabindex: '0', title: card.name });
+  // The drawn hand: each card shows where it was placed, or that it is on the bench this round.
+  function renderHandRow(side, card){
+    var p = state.players[side];
+    var slot = p.units.findIndex(function(u){ return u && u.card === card; });
+    var row = el('div', 'deck-row r-' + card.role + (slot === -1 ? ' benched' : ''), { tabindex: '0', title: card.name });
+    var where = slot !== -1 ? SLOT_NAMES[slot].toUpperCase() + ' #' + priority(side, slot) : 'BENCH';
     row.innerHTML = '<span class="pos mono"></span><span>' + card.icon + '</span>' +
-      '<span class="nm">' + card.name + (placed ? '<small>×' + placed + ' ON BOARD</small>' : '') + '</span>' + statCells(card);
-    hoverInspect(row, function(){ return { card: card, side: side }; });
+      '<span class="nm">' + card.name + '<small>' + where + '</small></span>' + statCells(card);
+    hoverInspect(row, function(){ return slot !== -1 ? { card: card, side: side, slot: slot } : { card: card, side: side }; });
     return row;
   }
 
@@ -824,7 +860,8 @@
     var panel = document.getElementById('panel-' + side);
     panel.innerHTML =
       '<div class="panel-head"><div class="panel-title">' + p.name + '</div>' +
-      '</div>';
+      '<span class="pill mono" title="Cards left in your deck (drawn at random)">Deck ' + p.deck.length + '</span>' +
+      '<span class="pill mono" title="Cards in the discard pile">Discard ' + p.discard.length + '</span></div>';
     var unitsSec = panel.appendChild(el('div', '', {}));
     // Slots are drawn facing the middle of the screen: the left player's run Back · Middle · Front, the right
     // player's Front · Middle · Back. Only the drawing order changes; slot 0 is always the front.
@@ -837,10 +874,10 @@
 
     var deckSec = panel.appendChild(el('div', 'deck-section', {}));
     var picksWrap = deckSec.appendChild(el('div', '', {}));
-    picksWrap.appendChild(el('div', 'row-label', {})).textContent = 'Your roster — ' + UNIT_SLOTS + ' are dealt at random each round';
+    picksWrap.appendChild(el('div', 'row-label', {})).textContent = 'Your hand — ' + p.hand.length + ' drawn, ' + UNIT_SLOTS + ' placed by preferred position';
     var picks = picksWrap.appendChild(el('div', 'deck-list', {}));
     picks.appendChild(statHeader());
-    for (var i = 0; i < p.roster.length; i++) picks.appendChild(renderRosterRow(side, i));
+    p.hand.forEach(function(card){ picks.appendChild(renderHandRow(side, card)); });
   }
 
   // Hovering (or focusing) a card shows it in Card Info. Only the Card Info panel is redrawn, so the board
@@ -915,7 +952,7 @@
     var body = document.getElementById('actionBody');
     var sp = state.spotlight;
     panel.className = 'action-panel' + (sp && sp.side != null ? ' p' + (sp.side + 1) : '');
-    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Your units are dealt. Choose each one\'s ability (⇄ on the card, or in Card Info), then start the battle.</div>'; return; }
+    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Your units were placed by preferred position. Switch abilities if you like (⇄ on the card, or in Card Info), then start the battle.</div>'; return; }
     body.innerHTML = '';
     if (!sp){ body.innerHTML = '<div class="action-wait">' + (clock ? 'Simming…' : 'Paused.') + '</div>'; return; }
     body.appendChild(el('div', 'action-title', {})).textContent = sp.title;
