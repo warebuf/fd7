@@ -322,6 +322,14 @@
   // A unit acts every `cd` ticks. Each Saboteur delay pushes that whole schedule back (u.delay ticks in total).
   function isDue(u, t, cd){ var e = t - (u.delay || 0); return e > 0 && e % cd === 0; }
   function chargeAt(u, t, cd){ var e = t - (u.delay || 0); return e <= 0 ? 0 : (e % cd) / cd; }
+  // The charge to show for the unit in this slot: full while it is still waiting its turn on the current tick
+  // (actions play one at a time, so others on the same tick may go first), otherwise from its schedule.
+  function chargeShown(side, slot, t){
+    var u = state.players[side].units[slot], cd = cooldownOf(side, slot);
+    if (!isFinite(cd)) return 0;
+    if (state.queue.some(function(q){ return q.side === side && q.slot === slot; })) return 1;
+    return chargeAt(u, t, cd);
+  }
   // The tick of u's next action: now, if it is still queued on this tick.
   function nextActionTick(side, slot, u, cd){
     if (state.queue.some(function(q){ return q.side === side && q.slot === slot; })) return state.tick;
@@ -517,8 +525,7 @@
       var parts = fill.getAttribute('data-charge').split('-');
       var side = +parts[0], slot = +parts[1];
       if (!state.players[side].units[slot]) return;
-      var cd = cooldownOf(side, slot);
-      var pct = isFinite(cd) ? chargeAt(state.players[side].units[slot], t, cd) : 0;
+      var pct = chargeShown(side, slot, t);
       fill.style.width = (pct * 100) + '%';
       fill.parentNode.classList.toggle('full', pct > .85);
     });
@@ -800,7 +807,7 @@
     var isNext = !!(next && next.side === side && next.slot === slot);
     var hpPct = Math.max(0, u.hp / u.maxHp);
     var cd = cooldownOf(side, slot);
-    var cdPct = state.phase === 'battle' && isFinite(cd) ? chargeAt(u, state.tick, cd) : 0;
+    var cdPct = state.phase === 'battle' ? chargeShown(side, slot, state.tick) : 0;
     var arm = armorOf(side, slot), mr = mrOf(side, slot);
     var buffed = arm !== card.armor || cd !== card.cooldown;
     var tile = el('div', 'tile r-' + card.role + (isNext && !clock ? ' next' : ''), {
