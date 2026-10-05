@@ -32,7 +32,7 @@ var CARD_DEFS = {
     abilities:[
       { id:'taunt', name:'Taunt', short:'TAUNT', passive:true, text:'Never acts. While Warden lives, every enemy attack must target it.' }
     ] },
-  saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:32, ad:0,  ap:0,  armor:15, mr:15, as:0.5,
+  saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support',  hp:32, ad:0,  ap:0,  armor:25, mr:25, as:0.5,
     abilities:[
       { id:'sabotage', name:'Sabotage', short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
       { id:'steal',    name:'Steal',    short:'STEAL', lines:['back'], text:'Steals 10% of a random stat from a random enemy, permanently.' }
