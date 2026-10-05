@@ -36,10 +36,6 @@ var CARD_DEFS = {
     abilities:[
       { id:'sabotage', name:'Sabotage', short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
       { id:'steal',    name:'Steal',    short:'STEAL', lines:['back'], text:'Steals 10% of a random stat from a random enemy, permanently.' }
-    ] },
-  dynamo:    { key:'dynamo',    name:'Dynamo',    icon:'✷', role:'attacker', hp:30, ad:10, ap:0,  armor:15, mr:10, as:0.5,
-    abilities:[
-      { id:'strike',  name:'Strike',  short:'STRIKE',  text:'Attack for 100% AD.' }
     ] }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).

@@ -549,8 +549,6 @@
       },
     // Medic · Heal the weakest ally (by HP %) for its AP
     heal: function(side, slot, u){ healWeakest(side, u, apOf(u)); },
-    // Dynamo · Strike: attack the frontmost enemy for 100% AD
-    strike: function(side, slot, u){ frontStrike(side, slot, u, adOf(u)); },
     // Medic · AD buff for the whole side
     adbuff: function(side, slot, u){ buffTeam(side, u, 'bonusAd', MEDIC_AD_BUFF, 'AD'); },
     // Predator · Trophy: attack the frontmost enemy; every kill permanently grows this card
