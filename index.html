@@ -400,12 +400,12 @@
   }
 
   // ---------- The clock ----------
-  // The battle sims on its own: the clock advances TICK_MS per tick and charge bars fill smoothly. On a tick
-  // where units act, every action resolves, the board redraws to show the hits, and the clock holds for
-  // ACTION_HOLD_MS before moving on. Pause/Resume stops and restarts it at any time, and switching an
+  // The battle sims on its own: the clock advances TICK_MS per tick and charge bars fill smoothly. When units
+  // act, each action resolves on its own, the board redraws and animates it, and the clock holds for
+  // ACTION_HOLD_MS before the next one. Pause/Resume stops and restarts it at any time, and switching an
   // ability mid-battle pauses it.
   var TICK_MS = 100;           // real time per tick: how fast charge bars fill
-  var ACTION_HOLD_MS = 1200;   // how long the sim pauses on each tick where units act, so the hits can be read
+  var ACTION_HOLD_MS = 1000;   // how long the sim pauses after each action, so it can be read
   var clock = null;   // { frac, last, raf } while simming
 
   function togglePause(){
@@ -478,14 +478,20 @@
     });
   }
 
-  // Resolves every action due on the current tick (the queue), spotlighting them together.
-  function resolveTick(){
-    if (!state.queue.length) return false;
-    clearFx();
-    state.spotlight = { title: 't' + state.tick, fromSeq: state.logSeq };
-    while (state.phase === 'battle' && resolveNext()){}
-    return true;
+  // Resolves the next action due on the current tick on its own: its own spotlight, board redraw and
+  // animations. Returns false if nothing is left to act on this tick.
+  function resolveOne(){
+    while (state.queue.length){
+      var a = state.queue[0], u = state.players[a.side].units[a.slot];
+      if (!u){ state.queue.shift(); continue; }   // killed earlier this tick
+      clearFx();
+      state.spotlight = { title: 't' + state.tick + ' · ' + state.players[a.side].name + "'s " + u.card.name, side: a.side, fromSeq: state.logSeq };
+      return resolveNext();
+    }
+    return false;
   }
+  // Actions play strictly one at a time. Each one is followed by a hold (at least ACTION_HOLD_MS, longer if its
+  // animation needs it); the next action due on the same tick goes next, and only then does the clock move on.
   function frame(now){
     var c = clock;
     if (!c) return;
@@ -493,13 +499,14 @@
     c.last = now;
     while (c.frac >= 1){
       c.frac -= 1;
-      if (state.tick >= SIM_TICKS){ stopClock(); timeUp(); return; }
-      state.tick++;
-      state.queue = actorsAt(state.tick);
-      if (resolveTick()){
+      if (!state.queue.length){
+        if (state.tick >= SIM_TICKS){ stopClock(); timeUp(); return; }
+        state.tick++;
+        state.queue = actorsAt(state.tick);
+      }
+      if (resolveOne()){
         if (state.phase !== 'battle'){ playEvents(); return; }   // the round ended (endRound stopped the clock and rendered)
-        // hold so the hits can be read — longer if this tick's animations need it
-        c.frac = Math.min(c.frac, 0) - Math.max(ACTION_HOLD_MS, state.fx.cursor + FX_FLIGHT + 600) / TICK_MS;
+        c.frac = Math.min(c.frac, 0) - Math.max(ACTION_HOLD_MS, state.fx.cursor + FX_FLIGHT + 500) / TICK_MS;
         render();
         playEvents();
         break;
