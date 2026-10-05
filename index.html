@@ -528,7 +528,7 @@
 
   // ---------- Actions ----------
   // Every unit uses the one ability its owner chose for it this round — see ABILITIES.
-  var MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, FLANK_MULT = 0.5, TROPHY_AD = 2, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
+  var MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, FLANK_MULT = 0.5, TROPHY_AD = 2, SABOTAGE_DELAY = 5;
 
   // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
   // permanent bonuses live on the card
@@ -537,16 +537,27 @@
 
   function act(side, slot, u){
     u.delayed = 0;
+    // jammed by a Saboteur's Jam: this turn's ability does nothing, but the turn (and its charge) is spent
+    if (u.jammed){
+      u.jammed = false;
+      fxFloat(side, slot, 'JAMMED', 'debuff');
+      return say(side, u, 'is jammed — its ' + findAbility(u.card, u.ability).name + ' does nothing this turn.', 'meta');
+    }
     return ABILITIES[u.ability](side, slot, u);
   }
-
-  // Stats a Saboteur can steal, and the card field each permanent bonus lives in.
-  var STEALABLE = [
-    { key: 'hp', field: 'bonusHp', label: 'HP' }, { key: 'ad', field: 'bonusAd', label: 'AD' },
-    { key: 'ap', field: 'bonusAp', label: 'AP' }, { key: 'armor', field: 'bonusArmor', label: 'armor' },
-    { key: 'mr', field: 'bonusMr', label: 'MR' }
-  ];
-  function statValue(card, st){ return card[st.key] + (card[st.field] || 0); }
+  // The enemy (on dSide) that will act soonest, ties broken by turn order; skip(unit) can rule units out.
+  // Returns its slot, or -1 if no enemy will act.
+  function nextEnemyToAct(dSide, skip){
+    var dp = state.players[dSide], best = -1, bestAt = Infinity, bestPrio = Infinity;
+    dp.units.forEach(function(e, i){
+      if (!e || (skip && skip(e))) return;
+      var cd = cooldownOf(dSide, i);
+      if (!isFinite(cd)) return;
+      var at = nextActionTick(dSide, i, e, cd), prio = priority(dSide, i);
+      if (at < bestAt || (at === bestAt && prio < bestPrio)){ best = i; bestAt = at; bestPrio = prio; }
+    });
+    return best;
+  }
 
   // Every unit on the side (the buffer included) permanently gains `amount` of a stat, stored on its card. Stacks.
   function buffTeam(side, u, field, amount, statName){
@@ -595,14 +606,7 @@
       },
     // Saboteur · Sabotage: push back the next enemy action
     sabotage: function(side, slot, u){
-        var dSide = 1 - side, dp = state.players[dSide], best = -1, bestAt = Infinity, bestPrio = Infinity;
-        dp.units.forEach(function(e, i){
-          if (!e) return;
-          var cd = cooldownOf(dSide, i);
-          if (!isFinite(cd)) return;
-          var at = nextActionTick(dSide, i, e, cd), prio = priority(dSide, i);
-          if (at < bestAt || (at === bestAt && prio < bestPrio)){ best = i; bestAt = at; bestPrio = prio; }
-        });
+        var dSide = 1 - side, dp = state.players[dSide], best = nextEnemyToAct(dSide);
         if (best === -1){ say(side, u, 'has no enemy action to delay.', 'idle'); return; }
         var target = dp.units[best];
         state.queue = state.queue.filter(function(q){ return !(q.side === dSide && q.slot === best); });
@@ -613,27 +617,16 @@
         say(side, u, 'sabotages ' + dp.name + "'s " + target.card.name + ': its next action slips ' + SABOTAGE_DELAY +
           ' ticks, to t' + nextActionTick(dSide, best, target, cooldownOf(dSide, best)) + '.', 'attack');
       },
-    // Saboteur · Steal STEAL_FRACTION (10%, at least 1) of a random stat from a random enemy, permanently
-    steal: function(side, slot, u){
+    // Saboteur · Jam: the next enemy to act (that isn't already jammed) skips its ability effect that turn; its
+    // charge still resets normally, so the turn is simply wasted
+    jam: function(side, slot, u){
         var dSide = 1 - side, dp = state.players[dSide];
-        var enemies = dp.units.map(function(e, i){ return e ? i : -1; }).filter(function(i){ return i !== -1; });
-        if (!enemies.length) return;
-        var vi = enemies[Math.floor(Math.random() * enemies.length)], victim = dp.units[vi];
-        var options = STEALABLE.filter(function(st){ return statValue(victim.card, st) > 0; });
-        if (!options.length){ say(side, u, 'finds nothing to steal.', 'idle'); return; }
-        var st = options[Math.floor(Math.random() * options.length)];
-        var amount = Math.max(1, Math.round(statValue(victim.card, st) * STEAL_FRACTION));
-        victim.card[st.field] = (victim.card[st.field] || 0) - amount;
-        u.card[st.field] = (u.card[st.field] || 0) + amount;
-        if (st.key === 'hp'){
-          victim.maxHp -= amount; victim.hp = Math.min(victim.hp, victim.maxHp);
-          u.maxHp += amount; u.hp += amount;
-        }
-        fxAttack(side, slot, dSide, vi);
-        fxFloat(dSide, vi, '−' + amount + ' ' + st.label, 'debuff');
-        fxFloat(side, slot, '+' + amount + ' ' + st.label, 'buff');
-        say(side, u, 'steals ' + amount + ' ' + st.label + ' from ' + dp.name + "'s " + victim.card.name + ', permanently.', 'attack');
-        if (victim.hp <= 0) killUnit(dSide, vi);
+        var target = nextEnemyToAct(dSide, function(e){ return e.jammed; });
+        if (target === -1){ say(side, u, 'has no enemy action to jam.', 'idle'); return; }
+        dp.units[target].jammed = true;
+        fxAttack(side, slot, dSide, target);
+        fxFloat(dSide, target, 'JAMMED', 'debuff');
+        say(side, u, 'jams ' + dp.name + "'s " + dp.units[target].card.name + ': its next ability does nothing.', 'attack');
       },
     // Warden · Taunt is passive (never acted out) — see chooseTarget
     taunt: function(){},
@@ -780,7 +773,7 @@
   }
 
   function signed(n){ return (n > 0 ? '+' : '−') + Math.abs(n); }
-  // Permanent stat changes a card has picked up in play (buffs, trophies, steals — stolen stats show negative).
+  // Permanent stat changes a card has picked up in play (Medic's AD buff, Predator trophies); losses show negative.
   function permanentBonuses(card){
     return [['bonusHp', 'HP', 'HP'], ['bonusAd', 'AD', 'AD'], ['bonusAp', 'AP', 'AP'], ['bonusArmor', 'ARM', 'armor'], ['bonusMr', 'MR', 'MR']]
       .filter(function(f){ return card[f[0]]; })
@@ -791,6 +784,7 @@
   function statusLine(u){
     var tags = [];
     if (u.delayed) tags.push('DELAYED +' + u.delayed);
+    if (u.jammed) tags.push('JAMMED');
     permanentBonuses(u.card).forEach(function(b){ tags.push(signed(b.amount) + ' ' + b.short); });
     return tags.length ? '<div class="line status">' + tags.join(' · ') + '</div>' : '';
   }
@@ -912,6 +906,7 @@
       var live = ['On ' + state.players[ins.side].name + "'s board", SLOT_NAMES[ins.slot] + ' slot', 'Turn order #' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,
                   'ARM ' + armorOf(ins.side, ins.slot) + ' · MR ' + mrOf(ins.side, ins.slot)];
       if (u.delayed) live.push('Delayed ' + u.delayed + ' ticks by a Saboteur');
+      if (u.jammed) live.push('Jammed: its next ability does nothing');
       permanentBonuses(ins.card).forEach(function(b){ live.push('Permanent: ' + signed(b.amount) + ' ' + b.long + ' for the game'); });
       var icd = cooldownOf(ins.side, ins.slot);
       live.push(isFinite(icd) ? 'Acts every ' + icd + ' ticks' : u.ability ? 'Passive — never acts' : 'Does not act on its own in this slot');

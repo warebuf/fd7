@@ -36,7 +36,7 @@ var CARD_DEFS = {
   saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support', prefers:'back',  hp:32, ad:0,  ap:0,  armor:25, mr:25, as:0.5,
     abilities:[
       { id:'sabotage', name:'Sabotage', short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
-      { id:'steal',    name:'Steal',    short:'STEAL', lines:['back'], text:'Steals 10% of a random stat from a random enemy, permanently.' }
+      { id:'jam',      name:'Jam',      short:'JAM',   lines:['back'], text:'The next enemy to act skips its ability effect, then resets its charge normally.' }
     ] }
 };
 // The battle runs on ticks, so each unit's attack speed becomes a cooldown in ticks (AS 0.5 → every 20 ticks).
