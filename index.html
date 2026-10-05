@@ -19,8 +19,6 @@
   .panel.p1{ --side:var(--p1); --side-bg:var(--p1-bg); }
   .panel.p2{ --side:var(--p2); --side-bg:var(--p2-bg); }
   .panel-head{ display:flex; align-items:center; gap:8px; }
-  .pill.energy{ color:var(--support); border-color:var(--support); font-weight:600; }
-  .pill.energy small{ font-weight:500; color:var(--text-dim); }
   .panel-title{ font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:.95rem; color:var(--side); flex:1 1 auto; }
   .row-label{ font-size:.6rem; text-transform:uppercase; letter-spacing:.07em; color:var(--text-dim); margin-bottom:4px; }
   .row{ display:flex; flex-wrap:wrap; gap:8px; }
@@ -193,7 +191,7 @@
   // cards all game, shared by every copy of that type.
   function newPlayer(name){
     var roster = Object.keys(CARD_DEFS).map(makeCard);
-    return { name: name, roster: roster, energy: 0, units: new Array(UNIT_SLOTS).fill(null) };
+    return { name: name, roster: roster, units: new Array(UNIT_SLOTS).fill(null) };
   }
   function newGame(){
     stopClock();
@@ -226,12 +224,6 @@
         var card = p.roster[Math.floor(Math.random() * p.roster.length)];
         return newUnit(card, slot);
       });
-      // a remembered costed ability the player can't afford falls back to a free one
-      p.units.forEach(function(u, slot){
-        if (energyLeft(p) >= 0 || !abilityCost(u.card, u.ability)) return;
-        var free = allowedAbilities(u.card, slot).filter(function(ab){ return !ab.cost; })[0];
-        u.ability = free ? free.id : null;
-      });
     });
   }
   function onSlotClick(side, slot){
@@ -254,28 +246,11 @@
   function canSwitchAbility(){ return state.phase === 'setup' || state.phase === 'battle'; }
   // Returns true if the unit now uses that ability.
   function setAbility(side, slot, id){
-    var p = state.players[side], u = p.units[slot];
+    var u = state.players[side].units[slot];
     if (!canSwitchAbility() || !u || !abilityAllowed(findAbility(u.card, id), slot)) return false;
     if (state.phase === 'battle' && clock){ stopClock(); addLog('t' + state.tick + ': battle paused to switch an ability.', 'meta'); }
     var next = findAbility(u.card, id).id;
-    if (next !== u.ability){
-      // in setup a switch re-plans the cost; mid-battle a costed ability is paid for on the spot
-      var extra = abilityCost(u.card, next) - (state.phase === 'setup' ? abilityCost(u.card, u.ability) : 0);
-      if (extra > energyLeft(p)){
-        addLog(p.name + ' needs ' + abilityCost(u.card, next) + ' energy for ' + findAbility(u.card, next).name + ' (has ' + energyLeft(p) + ').', 'meta');
-        render();
-        return false;
-      }
-      if (state.phase === 'battle' && abilityCost(u.card, next)){
-        p.energy -= abilityCost(u.card, next);
-        addLog('t' + state.tick + ': ' + p.name + ' spends ' + abilityCost(u.card, next) + ' energy on ' + findAbility(u.card, next).name + '.', 'meta');
-      }
-    }
     if (state.phase === 'battle' && next !== u.ability){
-      u.breachUsed = false;   // switching to Breach or Revive mid-battle (and paying for it again) re-arms it
-      u.reviveUsed = false;
-      u.warpUsed = false;
-      u.empowerUsed = false;
       u.delay = state.tick;   // the schedule restarts from now, so the charge bar empties
       u.delayed = 0;
       state.queue = state.queue.filter(function(q){ return !(q.side === side && q.slot === slot); });
@@ -291,7 +266,6 @@
   function cycleAbility(side, slot){
     var u = state.players[side].units[slot], list = allowedAbilities(u.card, slot);
     if (!list.length) return;
-    // move to the next ability along that the player can afford
     var i = list.indexOf(findAbility(u.card, u.ability));
     for (var step = 1; step < list.length; step++){
       if (setAbility(side, slot, list[(i + step) % list.length].id)) return;
@@ -304,13 +278,6 @@
     state.phase = 'battle';
     state.tick = 0;
     state.queue = [];
-    state.fallen = [[], []];   // units defeated this round, newest last, for Revive
-    state.players.forEach(function(p){
-      var cost = plannedCost(p);
-      if (!cost) return;
-      p.energy -= cost;
-      addLog(p.name + ' spends ' + cost + ' energy on this round\'s units and abilities (' + p.energy + ' left).', 'meta');
-    });
     state.spotlight = { title: 'Battle begins', fromSeq: state.logSeq };
     addLog('Round ' + state.round + ': battle begins.', 'meta');
     if (!checkForWipe()) startClock();   // a side that fielded no units loses on the spot
@@ -533,11 +500,11 @@
 
   // ---------- Actions ----------
   // Every unit uses the one ability its owner chose for it this round — see ABILITIES.
-  var MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, FLANK_MULT = 0.5, TROPHY_AD = 2, DYNAMO_EMPOWER_AD = 5, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
+  var MEDIC_AD_BUFF = 3, HEAVY_MULT = 1.5, FLANK_MULT = 0.5, TROPHY_AD = 2, SABOTAGE_DELAY = 5, STEAL_FRACTION = 0.1;
 
   // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
-  // permanent bonuses live on the card; roundAd is a bonus that lasts only for this round (Dynamo's Empower)
-  function adOf(u){ return u.card.ad + (u.card.bonusAd || 0) + (u.roundAd || 0); }
+  // permanent bonuses live on the card
+  function adOf(u){ return u.card.ad + (u.card.bonusAd || 0); }
   function apOf(u){ return u.card.ap + (u.card.bonusAp || 0); }
 
   function act(side, slot, u){
@@ -573,21 +540,6 @@
         var pick = alive[Math.floor(Math.random() * alive.length)];
         strike(side, slot, u, 1 - side, chooseTarget(dp, pick), Math.round(adOf(u) * HEAVY_MULT), 'physical', { what: 'heavy attack' });
       },
-    // Striker · Breach (2 energy): its next attack hits the frontmost enemy and the unit behind it, 100% AD each.
-    // After that one breaching attack it attacks the frontmost enemy normally. Taunt still decides the first target;
-    // the second is the next unit behind that one.
-    breach: function(side, slot, u){
-        if (u.breachUsed) return frontStrike(side, slot, u, adOf(u));
-        u.breachUsed = true;
-        var dSide = 1 - side, dp = state.players[dSide];
-        var first = chooseTarget(dp, null);
-        if (!first) return;
-        var behind = -1;
-        for (var i = first.slot + 1; i < dp.units.length && behind === -1; i++) if (dp.units[i]) behind = i;
-        var second = behind === -1 ? null : dp.units[behind];
-        strike(side, slot, u, dSide, first, adOf(u), 'physical', { what: 'breach' });
-        if (second && dp.units[behind] === second && state.phase === 'battle') strike(side, slot, u, dSide, { slot: behind }, adOf(u), 'physical', { what: 'breach' });
-      },
     // Striker · Execute: hit the most damaged enemy (lowest HP %) for its AD; the front line if nobody is damaged yet
     execute: function(side, slot, u){
         var dp = state.players[1 - side], best = -1, bestPct = 1;
@@ -597,56 +549,8 @@
       },
     // Medic · Heal the weakest ally (by HP %) for its AP
     heal: function(side, slot, u){ healWeakest(side, u, apOf(u)); },
-    // Chronomancer · Time Warp (3 energy), once: every other ally that can act gets full charge — it acts right away
-    // on this tick (again, if it already acted) and its charge bar then restarts from empty.
-    timewarp: function(side, slot, u){
-      if (u.warpUsed){ say(side, u, 'has already bent time this round.', 'idle'); return; }
-      u.warpUsed = true;
-      var p = state.players[side], boosted = [];
-      p.units.forEach(function(a, i){
-        if (!a || a === u || !isFinite(cooldownOf(side, i))) return;
-        a.delay = state.tick;
-        if (!state.queue.some(function(q){ return q.side === side && q.slot === i; }))
-          state.queue.push({ side: side, slot: i, tick: state.tick, prio: priority(side, i) });
-        fxFloat(side, i, 'WARP', 'buff');
-        boosted.push(a.card.name);
-      });
-      state.queue.sort(function(a, b){ return a.prio - b.prio; });
-      say(side, u, boosted.length ? 'warps time: ' + boosted.join(', ') + ' get full charge and act now!' : 'warps time, but no ally can act.', 'heal');
-    },
-    // Dynamo · Empower (1 energy), once: +DYNAMO_EMPOWER_AD AD for the rest of the round; after that it attacks
-    // like Strike. Switching back to Empower mid-battle (paying again) buffs again, and the bonuses stack.
-    empower: function(side, slot, u){
-      if (u.empowerUsed) return frontStrike(side, slot, u, adOf(u));
-      u.empowerUsed = true;
-      u.roundAd = (u.roundAd || 0) + DYNAMO_EMPOWER_AD;
-      fxFloat(side, slot, '+' + DYNAMO_EMPOWER_AD + ' AD', 'buff');
-      say(side, u, 'empowers itself: +' + DYNAMO_EMPOWER_AD + ' AD for the round (now ' + adOf(u) + ').', 'heal');
-    },
     // Dynamo · Strike: attack the frontmost enemy for 100% AD
     strike: function(side, slot, u){ frontStrike(side, slot, u, adOf(u)); },
-    // Generator · Generate: +1 energy for its owner (it acts every 100 ticks)
-    generate: function(side, slot, u){
-      var p = state.players[side];
-      p.energy += 1;
-      fxFloat(side, slot, '+1 ⚡', 'buff');
-      say(side, u, 'generates 1 energy (' + p.name + ' now has ⚡' + p.energy + ').', 'heal');
-    },
-    // Medic · Revive (4 energy), once: bring back the most recently defeated ally whose slot is free, at half HP and
-    // with an empty charge bar. Before anyone has fallen, and after the one revive, it heals instead.
-    revive: function(side, slot, u){
-      var p = state.players[side];
-      var fallen = u.reviveUsed ? null : state.fallen[side].filter(function(f){ return !p.units[f.slot]; }).pop();
-      if (!fallen) return healWeakest(side, u, apOf(u));
-      u.reviveUsed = true;
-      state.fallen[side].splice(state.fallen[side].indexOf(fallen), 1);
-      var back = newUnit(fallen.card, fallen.slot);
-      back.hp = Math.ceil(back.maxHp / 2);
-      back.delay = state.tick;   // zero charge: its next action is a full cooldown away
-      p.units[fallen.slot] = back;
-      fxFloat(side, fallen.slot, 'REVIVED', 'heal');
-      say(side, u, 'revives ' + fallen.card.name + ' at ' + back.hp + '/' + back.maxHp + ' HP with zero charge!', 'heal');
-    },
     // Medic · AD buff for the whole side
     adbuff: function(side, slot, u){ buffTeam(side, u, 'bonusAd', MEDIC_AD_BUFF, 'AD'); },
     // Predator · Trophy: attack the frontmost enemy; every kill permanently grows this card
@@ -764,7 +668,6 @@
     if (!u) return;
     p.units[slot] = null;
     fxFloat(side, slot, 'DEFEATED', 'dmg');
-    state.fallen[side].push({ card: u.card, slot: slot });
     addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' is destroyed.', 'destroy');
   }
 
@@ -791,17 +694,6 @@
     endRound(alive[0] ? 0 : alive[1] ? 1 : null, 'both sides were wiped out');
     return true;
   }
-  // ---------- Energy ----------
-  // Each player earns ENERGY_PER_ROUND at the end of every round, and it carries over. Cards and abilities may
-  // have an energy `cost`: in setup, what you field and pick is planned against your energy and paid when the
-  // battle starts; switching to a costed ability mid-battle pays for it on the spot. Everything so far is free.
-  var ENERGY_PER_ROUND = 2;
-  function abilityCost(card, id){ return id ? (findAbility(card, id).cost || 0) : 0; }
-  function unitCost(u){ return (u.card.cost || 0) + abilityCost(u.card, u.ability); }
-  function plannedCost(p){ return p.units.reduce(function(a, u){ return a + (u ? unitCost(u) : 0); }, 0); }
-  // energy not yet committed: in setup, minus what the current board would cost
-  function energyLeft(p){ return p.energy - (state.phase === 'setup' ? plannedCost(p) : 0); }
-
   function endRound(winner, tieReason){
     stopClock();
     state.queue = [];
@@ -812,8 +704,6 @@
       addLog(state.players[1 - winner].name + ' has no units left — ' + state.players[winner].name + ' wins round ' + state.round +
         '. Score ' + state.roundWins[0] + '–' + state.roundWins[1] + '.', 'win');
     }
-    state.players.forEach(function(p){ p.energy += ENERGY_PER_ROUND; });
-    addLog('Each player gains ' + ENERGY_PER_ROUND + ' energy (' + state.players.map(function(p){ return p.name + ' ⚡' + p.energy; }).join(', ') + ').', 'meta');
     state.phase = 'roundEnd';
     render();
   }
@@ -840,16 +730,14 @@
   // can use from this slot, whenever switching is allowed (and there is more than one).
   function roleLine(card, u, slot){
     if (!u.ability){
-      var why = allowedAbilities(card, slot).length
-        ? 'Not enough energy for its ability: ' + card.abilities.map(function(a){ return a.name + ' (⚡' + (a.cost || 0) + ')'; }).join(', ')
-        : 'No ability can be used from this slot: ' + card.abilities.map(function(a){ return a.name + ' (' + slotRestriction(a) + ')'; }).join(', ');
-      return '<div class="line" title="' + why + '">NO ABILITY</div>';
+      var only = card.abilities.map(function(a){ return a.name + ' (' + slotRestriction(a) + ')'; }).join(', ');
+      return '<div class="line" title="No ability can be used from this slot: ' + only + '">NO ABILITY</div>';
     }
     var ab = findAbility(card, u.ability);
     var tip = ab.name + ': ' + ab.text;
     if (canSwitchAbility() && allowedAbilities(card, slot).length > 1)
       return '<button class="ability-btn" type="button" title="' + tip + ' — click to switch ability' +
-        (state.phase === 'battle' ? ' (pauses the battle and resets its charge)' : '') + '">' + ab.short + (ab.cost ? ' ⚡' + ab.cost : '') + ' ⇄</button>';
+        (state.phase === 'battle' ? ' (pauses the battle and resets its charge)' : '') + '">' + ab.short + ' ⇄</button>';
     return '<div class="line hot" title="' + tip + '">' + ab.short + '</div>';
   }
 
@@ -870,7 +758,6 @@
   function statusLine(u){
     var tags = [];
     if (u.delayed) tags.push('DELAYED +' + u.delayed);
-    if (u.roundAd) tags.push('+' + u.roundAd + ' AD this round');
     permanentBonuses(u.card).forEach(function(b){ tags.push(signed(b.amount) + ' ' + b.short); });
     return tags.length ? '<div class="line status">' + tags.join(' · ') + '</div>' : '';
   }
@@ -929,15 +816,9 @@
     var placed = countOnBoard(p, card);
     var row = el('div', 'deck-row r-' + card.role, { tabindex: '0', title: card.name });
     row.innerHTML = '<span class="pos mono"></span><span>' + card.icon + '</span>' +
-      '<span class="nm">' + card.name + (card.cost ? '<small>⚡' + card.cost + '</small>' : '') + (placed ? '<small>×' + placed + ' ON BOARD</small>' : '') + '</span>' + statCells(card);
+      '<span class="nm">' + card.name + (placed ? '<small>×' + placed + ' ON BOARD</small>' : '') + '</span>' + statCells(card);
     hoverInspect(row, function(){ return { card: card, side: side }; });
     return row;
-  }
-
-  function energyPill(p){
-    var planned = state.phase === 'setup' ? plannedCost(p) : 0;
-    return '<span class="pill mono energy" title="Energy: +' + ENERGY_PER_ROUND + ' at the end of every round, spent on costed units and abilities">⚡ ' +
-      energyLeft(p) + (planned ? ' <small>(' + planned + ' planned)</small>' : '') + '</span>';
   }
 
   function renderPanel(side, next){
@@ -945,7 +826,7 @@
     var panel = document.getElementById('panel-' + side);
     panel.innerHTML =
       '<div class="panel-head"><div class="panel-title">' + p.name + '</div>' +
-      energyPill(p) + '</div>';
+      '</div>';
     var unitsSec = panel.appendChild(el('div', '', {}));
     // Slots are drawn facing the middle of the screen: the left player's run Back · Middle · Front, the right
     // player's Front · Middle · Back. Only the drawing order changes; slot 0 is always the front.
