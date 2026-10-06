@@ -30,7 +30,7 @@
   .deck-list{ display:flex; flex-direction:column; gap:3px; }
   /* deck rows are a small table: position, icon, name, then one aligned column per stat */
   .deck-row, .deck-cols{
-    display:grid; grid-template-columns:18px 18px minmax(0,1fr) repeat(6, 32px); align-items:center; column-gap:4px;
+    display:grid; grid-template-columns:18px 18px minmax(0,1fr) repeat(7, 32px); align-items:center; column-gap:4px;
     padding:3px 8px; font-size:.74rem;
   }
   .deck-row{ border-radius:6px; background:var(--panel-2); border-left:3px solid var(--role); }
@@ -40,6 +40,11 @@
   .deck-row .nm small{ color:var(--side); font-size:.6rem; font-weight:600; margin-left:5px; letter-spacing:.04em; }
   .deck-row .num{ font-size:.68rem; }
   .deck-row.benched{ opacity:.55; }
+  .structures{ display:flex; flex-direction:column; gap:4px; }
+  .structures .row-label b{ color:var(--text); font-size:.7rem; }
+  .con-pending{ text-transform:none; letter-spacing:0; }
+  .structure-row{ display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+  .structure-pill{ font-size:.7rem; border-color:var(--support); color:var(--support); font-weight:600; }
   .deck-row .num.zero{ color:var(--text-dim); opacity:.5; }
   .deck-row .num.key{ color:var(--role); font-weight:600; }
   .deck-row.r-attacker{ --role:var(--danger); }
@@ -202,7 +207,7 @@
   }
   // Each player has a shuffled 12-card deck.
   function newPlayer(name, recipe){
-    return { name: name, deck: buildDeck(recipe), hand: [], discard: [], units: new Array(UNIT_SLOTS).fill(null) };
+    return { name: name, deck: buildDeck(recipe), hand: [], discard: [], con: 0, structures: [], units: new Array(UNIT_SLOTS).fill(null) };
   }
   function newGame(){
     stopClock();
@@ -539,7 +544,8 @@
 
   // Permanent bonuses earned in play live on the card itself, so they follow it through the deck.
   // permanent bonuses live on the card
-  function adOf(u){ return u.card.ad + (u.card.bonusAd || 0); }
+  // permanent bonuses live on the card; roundAd lasts only for this round (Blood Engine)
+  function adOf(u){ return u.card.ad + (u.card.bonusAd || 0) + (u.roundAd || 0); }
   function apOf(u){ return u.card.ap + (u.card.bonusAp || 0); }
 
   function act(side, slot, u){
@@ -638,7 +644,14 @@
     // Warden · Taunt is passive (never acted out) — see chooseTarget
     taunt: function(){},
     // Any unit · No action (passive: never acted out)
-    none: function(){}
+    none: function(){},
+    // Any unit · Construct: add its CON to the construction pool
+    construct: function(side, slot, u){
+      var p = state.players[side];
+      p.con += u.card.con || 0;
+      fxFloat(side, slot, '+' + (u.card.con || 0) + ' CON', 'buff');
+      say(side, u, 'constructs: +' + (u.card.con || 0) + ' construction (' + p.name + ' now has ' + p.con + ').', 'heal');
+    }
   };
 
   // Who does an attack on dp hit? The frontmost unit (front slot, else middle, else back) by default, or a
@@ -667,6 +680,7 @@
     fxAttack(side, slot, dSide, tSlot);
     var dealt = dealDamage(dSide, tSlot, amount, type, label);
     if (dp.units[tSlot] !== victim && opts.onKill) opts.onKill(victim);
+    if (state.players[side].units[slot] === u) fireStructures(side, 'attack', slot);
     return dealt;
   }
 
@@ -685,6 +699,7 @@
     fxFloat(side, slot, '−' + dealt, 'dmg');
     var note = dealt === amount ? '' : ' (' + amount + ' ' + type + ', ' + (type === 'physical' ? 'armor' : 'MR') + ' blocked ' + (amount - dealt) + ')';
     addLog('t' + state.tick + ': ' + label + ' hits ' + p.name + "'s " + u.card.name + ' for ' + dealt + note + '.', 'attack');
+    if (dealt > 0 && u.hp > 0) fireStructures(side, 'damaged', slot);
     if (u.hp <= 0) killUnit(side, slot);
     return dealt;
   }
@@ -697,16 +712,68 @@
     addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' is destroyed.', 'destroy');
   }
 
+  // Heals the weakest ally (lowest HP %). With an Overflow Clinic, healing past max HP raises max HP by the excess
+  // (once per Clinic) for the round, so full-HP units are worth healing too.
   function healWeakest(side, u, amount, what){
-    var p = state.players[side], best = -1, bestPct = 1;
+    var p = state.players[side], clinics = structureCount(p, 'clinic'), best = -1, bestPct = Infinity;
     p.units.forEach(function(o, i){
-      if (o && o.hp < o.maxHp && o.hp / o.maxHp < bestPct){ bestPct = o.hp / o.maxHp; best = i; }
+      if (o && (clinics || o.hp < o.maxHp) && o.hp / o.maxHp < bestPct){ bestPct = o.hp / o.maxHp; best = i; }
     });
     if (best === -1){ say(side, u, 'has nothing to heal.', 'idle'); return; }
-    var o = p.units[best], before = o.hp;
+    var o = p.units[best], before = o.hp, over = Math.max(0, o.hp + amount - o.maxHp);
     o.hp = Math.min(o.maxHp, o.hp + amount);
-    fxFloat(side, best, '+' + (o.hp - before), 'heal');
-    say(side, u, (what ? '(' + what + ') ' : '') + 'heals ' + o.card.name + ' for ' + (o.hp - before) + '.', 'heal');
+    var healed = o.hp - before;
+    if (healed) fxFloat(side, best, '+' + healed, 'heal');
+    if (clinics && over){
+      o.maxHp += over * clinics;
+      o.hp += over;
+      fxFloat(side, best, '+' + over * clinics + ' max HP', 'buff');
+    }
+    say(side, u, (what ? '(' + what + ') ' : '') + 'heals ' + o.card.name +
+      (healed ? ' for ' + healed : '') +
+      (clinics && over ? (healed ? ', and the' : ': the') + ' Overflow Clinic turns ' + over + ' overheal into +' + over * clinics + ' max HP (' + o.hp + '/' + o.maxHp + ')' : '') +
+      '.', 'heal');
+    fireStructures(side, 'heal', p.units.indexOf(u));
+  }
+
+  // ---------- Construction & structures ----------
+  function structureCount(p, key){ return p.structures.filter(function(k){ return k === key; }).length; }
+  // Every triggered structure on `side` matching this event fires once per copy, paying its `spend` from the
+  // construction pool each time (skipped if the pool can't pay). slot is the ally the event happened to.
+  var STRUCTURE_EFFECTS = {
+    wardrum: function(p, side){
+      p.units.forEach(function(a, i){ if (a){ a.roundAd = (a.roundAd || 0) + 2; fxFloat(side, i, '+2 AD', 'buff'); } });
+      return 'all allies +2 AD';
+    },
+    shrine: function(p, side){
+      p.units.forEach(function(a, i){ if (a){ a.maxHp += 5; a.hp += 5; fxFloat(side, i, '+5 max HP', 'buff'); } });
+      return 'all allies +5 max HP';
+    },
+    bloodengine: function(p, side, slot){
+      var a = p.units[slot];
+      a.roundAd = (a.roundAd || 0) + 3;
+      fxFloat(side, slot, '+3 AD', 'buff');
+      return a.card.name + ' +3 AD (now ' + adOf(a) + ')';
+    }
+  };
+  function fireStructures(side, trigger, slot){
+    var p = state.players[side];
+    if (!p.units[slot]) return;
+    p.structures.forEach(function(key){
+      var def = STRUCTURE_DEFS[key];
+      if (def.trigger !== trigger || p.con < def.spend || !p.units[slot]) return;
+      p.con -= def.spend;
+      var what = STRUCTURE_EFFECTS[key](p, side, slot);
+      addLog(p.name + "'s " + def.name + ' (−' + def.spend + ' construction, ' + p.con + ' left): ' + what + '.', 'heal');
+    });
+  }
+  function build(side, key){
+    var p = state.players[side], def = STRUCTURE_DEFS[key];
+    if (state.phase !== 'setup' || p.con < def.cost) return;
+    p.con -= def.cost;
+    p.structures.push(key);
+    addLog(p.name + ' builds ' + def.name + ' (' + p.con + ' construction left).', 'heal');
+    render();
   }
 
   // ---------- Rounds ----------
@@ -792,6 +859,7 @@
     var tags = [];
     if (u.delayed) tags.push('DELAYED +' + u.delayed);
     if (u.jammed) tags.push('JAMMED');
+    if (u.roundAd) tags.push('+' + u.roundAd + ' AD this round');
     permanentBonuses(u.card).forEach(function(b){ tags.push(signed(b.amount) + ' ' + b.short); });
     return tags.length ? '<div class="line status">' + tags.join(' · ') + '</div>' : '';
   }
@@ -826,11 +894,11 @@
     return tile;
   }
 
-  var STAT_COLS = ['HP', 'AD', 'AP', 'ARM', 'MR', 'AS'];
+  var STAT_COLS = ['HP', 'AD', 'AP', 'ARM', 'MR', 'AS', 'CON'];
   // The stat each role cares about most is highlighted: damage for attackers, heal power for healers.
   var KEY_STAT = { attacker: 'AD', healer: 'AP' };
   function statCells(card){
-    var vals = { HP: card.hp + (card.bonusHp || 0), AD: card.ad + (card.bonusAd || 0), AP: card.ap + (card.bonusAp || 0), ARM: card.armor + (card.bonusArmor || 0), MR: card.mr + (card.bonusMr || 0), AS: card.as };
+    var vals = { HP: card.hp + (card.bonusHp || 0), AD: card.ad + (card.bonusAd || 0), AP: card.ap + (card.bonusAp || 0), ARM: card.armor + (card.bonusArmor || 0), MR: card.mr + (card.bonusMr || 0), AS: card.as, CON: card.con };
     return STAT_COLS.map(function(k){
       var v = vals[k];
       var text = k === 'AS' ? (v > 0 ? v.toFixed(2) : '—') : v;
@@ -856,6 +924,51 @@
     return row;
   }
 
+  // Construction pool, built structures, and (in setup) a Build button per structure.
+  // Construction pool, built structures, and (in setup) a Build button per structure. Hovering any of them shows
+  // the structure in Card Info.
+  function renderStructures(side, panel){
+    var p = state.players[side];
+    var sec = panel.appendChild(el('div', 'structures', {}));
+    sec.innerHTML = '<div class="row-label">Construction <b class="mono">' + p.con + '</b></div>';
+    var builtRow = sec.appendChild(el('div', 'structure-row', {}));
+    var owned = Object.keys(STRUCTURE_DEFS).filter(function(k){ return structureCount(p, k); });
+    if (!owned.length) builtRow.appendChild(el('span', 'empty-note', {})).textContent = 'No structures built.';
+    owned.forEach(function(k){
+      var def = STRUCTURE_DEFS[k], n = structureCount(p, k);
+      var pill = builtRow.appendChild(el('span', 'pill structure-pill', { tabindex: '0' }));
+      pill.textContent = def.icon + ' ' + def.name + (n > 1 ? ' ×' + n : '');
+      hoverInspect(pill, function(){ return { structure: k, side: side }; });
+    });
+    if (state.phase !== 'setup') return;
+    var row = sec.appendChild(el('div', 'structure-row', {}));
+    Object.keys(STRUCTURE_DEFS).forEach(function(k){
+      var def = STRUCTURE_DEFS[k];
+      // wrapped, because disabled buttons don't get hover events in every browser
+      var wrap = row.appendChild(el('span', '', {}));
+      var b = wrap.appendChild(el('button', 'btn small', { type: 'button' }));
+      b.textContent = 'Build ' + def.icon + ' ' + def.name + ' · ' + def.cost;
+      b.disabled = p.con < def.cost;
+      b.addEventListener('click', function(){ build(side, k); });
+      hoverInspect(wrap, function(){ return { structure: k, side: side }; });
+    });
+  }
+
+  var TRIGGER_TEXT = { attack: 'one of your units attacks', heal: 'one of your units heals', damaged: 'one of your units takes damage' };
+  // Card Info for a structure: what it does, what it costs, and how many this player owns.
+  function structureInfoHtml(key, p){
+    var def = STRUCTURE_DEFS[key], n = structureCount(p, key);
+    var when = def.trigger
+      ? 'Triggers when ' + TRIGGER_TEXT[def.trigger] + ' · costs ' + def.spend + ' construction each time'
+      : 'Always on · free to run';
+    return '<div class="inspector-title"><div class="inspector-icon">' + def.icon + '</div>' +
+      '<div><div class="inspector-name">' + def.name + '</div><div class="inspector-role">Structure · builds for ' + def.cost + ' construction</div></div></div>' +
+      '<div class="inspector-stats"><span class="stat-pill">' + when + '</span></div>' +
+      '<div class="inspector-effect">' + def.text + '</div>' +
+      '<div class="inspector-live">' + p.name + (n ? ' owns ' + n + (n > 1 ? ' — their effects stack' : '') : ' has not built one') +
+      ' · construction pool ' + p.con + '</div>';
+  }
+
   function renderPanel(side, next){
     var p = state.players[side];
     var panel = document.getElementById('panel-' + side);
@@ -873,6 +986,8 @@
     var unitsRow = unitsSec.appendChild(el('div', 'row units-row', {}));
     drawOrder.forEach(function(slot){ unitsRow.appendChild(renderUnit(side, slot, next)); });
 
+    renderStructures(side, panel);
+
     var deckSec = panel.appendChild(el('div', 'deck-section', {}));
     var picksWrap = deckSec.appendChild(el('div', '', {}));
     picksWrap.appendChild(el('div', 'row-label', {})).textContent = 'Your hand — ' + p.hand.length + ' drawn, ' + UNIT_SLOTS + ' placed by preferred position';
@@ -886,7 +1001,7 @@
   function hoverInspect(elem, getInfo){
     var show = function(){
       var info = getInfo(), cur = state.inspected;
-      if (!info || (cur && cur.card === info.card && cur.side === info.side && cur.slot === info.slot)) return;
+      if (!info || (cur && cur.card === info.card && cur.structure === info.structure && cur.side === info.side && cur.slot === info.slot)) return;
       state.inspected = info;
       renderInspector();
     };
@@ -901,6 +1016,11 @@
     if (!ins){
       box.className = 'inspector';
       body.innerHTML = '<div class="inspector-empty">Click any card to see its stats.</div>';
+      return;
+    }
+    if (ins.structure){
+      box.className = 'inspector r-support';
+      body.innerHTML = structureInfoHtml(ins.structure, state.players[ins.side]);
       return;
     }
     box.className = 'inspector r-' + ins.card.role;
