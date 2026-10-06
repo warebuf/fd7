@@ -328,7 +328,7 @@
     var nums = function(side){ return SLOT_NAMES.map(function(_, slot){ return '#' + priority(side, slot); }).join(', '); };
     addLog('Turn order: ' + state.players[oddSide()].name + ' acts ' + nums(oddSide()) + ' and ' + state.players[1 - oddSide()].name + ' ' + nums(1 - oddSide()) + ' on shared ticks.', 'meta');
   }
-  // A unit acts every `cd` ticks. Each Saboteur delay pushes that whole schedule back (u.delay ticks in total).
+  // A unit acts every `cd` ticks. Each Engineer delay (Sabotage) pushes that whole schedule back (u.delay ticks in total).
   function isDue(u, t, cd){ var e = t - (u.delay || 0); return e > 0 && e % cd === 0; }
   function chargeAt(u, t, cd){ var e = t - (u.delay || 0); return e <= 0 ? 0 : (e % cd) / cd; }
   // The charge to show for the unit in this slot: full while it is still waiting its turn on the current tick
@@ -554,7 +554,7 @@
 
   function act(side, slot, u){
     u.delayed = 0;
-    // jammed by a Saboteur's Jam: this turn's ability does nothing, but the turn (and its charge) is spent
+    // jammed by an Engineer's Jam: this turn's ability does nothing, but the turn (and its charge) is spent
     if (u.jammed){
       u.jammed = false;
       fxFloat(side, slot, 'JAMMED', 'debuff');
@@ -621,7 +621,7 @@
         if (back === -1) return;
         strike(side, slot, u, 1 - side, chooseTarget(dp, back), Math.round(adOf(u) * FLANK_MULT), 'physical', { what: 'flank' });
       },
-    // Saboteur · Sabotage: push back the next enemy action
+    // Engineer · Sabotage: push back the next enemy action
     sabotage: function(side, slot, u){
         var dSide = 1 - side, dp = state.players[dSide], best = nextEnemyToAct(dSide);
         if (best === -1){ say(side, u, 'has no enemy action to delay.', 'idle'); return; }
@@ -634,7 +634,7 @@
         say(side, u, 'sabotages ' + dp.name + "'s " + target.card.name + ': its next action slips ' + SABOTAGE_DELAY +
           ' ticks, to t' + nextActionTick(dSide, best, target, cooldownOf(dSide, best)) + '.', 'attack');
       },
-    // Saboteur · Jam: the next enemy to act (that isn't already jammed) skips its ability effect that turn; its
+    // Engineer · Jam: the next enemy to act (that isn't already jammed) skips its ability effect that turn; its
     // charge still resets normally, so the turn is simply wasted
     jam: function(side, slot, u){
         var dSide = 1 - side, dp = state.players[dSide];
@@ -1067,7 +1067,7 @@
     if (u && u.card === ins.card){
       var live = ['On ' + state.players[ins.side].name + "'s board", SLOT_NAMES[ins.slot] + ' slot', 'Turn order #' + priority(ins.side, ins.slot), 'HP ' + u.hp + '/' + u.maxHp,
                   'ARM ' + armorOf(ins.side, ins.slot) + ' · MR ' + mrOf(ins.side, ins.slot)];
-      if (u.delayed) live.push('Delayed ' + u.delayed + ' ticks by a Saboteur');
+      if (u.delayed) live.push('Delayed ' + u.delayed + ' ticks by an Engineer');
       if (u.jammed) live.push('Jammed: its next ability does nothing');
       permanentBonuses(ins.card).forEach(function(b){ live.push('Permanent: ' + signed(b.amount) + ' ' + b.long + ' for the game'); });
       var icd = cooldownOf(ins.side, ins.slot);

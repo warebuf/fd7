@@ -35,7 +35,7 @@ var CARD_DEFS = {
     abilities:[
       { id:'taunt', name:'Taunt', short:'TAUNT', passive:true, text:'Never acts. While Warden lives, every enemy attack must target it.' }
     ] },
-  saboteur:  { key:'saboteur',  name:'Saboteur',  icon:'⚙', role:'support', prefers:'back',  hp:32, ad:0,  ap:0,  armor:25, mr:25, as:0.5, con:20,
+  engineer:  { key:'engineer',  name:'Engineer',  icon:'⚙', role:'support', prefers:'back',  hp:32, ad:0,  ap:0,  armor:25, mr:25, as:0.5, con:20,
     abilities:[
       { id:'sabotage', name:'Sabotage', short:'DELAY', text:'Delays the next enemy to act by 5 ticks.' },
       { id:'jam',      name:'Jam',      short:'JAM',   lines:['back'], text:'The next enemy to act skips its ability effect, then resets its charge normally.' }
@@ -54,7 +54,7 @@ Object.keys(CARD_DEFS).forEach(function(k){
 
 var DECK_SIZE = 12;   // every deck is exactly this many cards
 var HAND_SIZE = 6;    // cards drawn each round; 4 of them are placed (see autoPlace in index.html)
-var DEFAULT_RECIPE = { striker:3, medic:3, predator:2, warden:2, saboteur:2 };
+var DEFAULT_RECIPE = { striker:3, medic:3, predator:2, warden:2, engineer:2 };
 var MAX_COPIES = 6;
 // The board slots by index, front to back: two front-line slots, one middle, one back. Attacks land on the
 // frontmost unit by default. On screen each side's front faces the middle, so the left player's board is drawn
@@ -142,8 +142,13 @@ function defaultRecipe(){
 function deckTotal(recipe){
   return Object.keys(recipe).reduce(function(a, k){ return a + recipe[k]; }, 0);
 }
+// Old card keys in saved decks, mapped to their current name.
+var RENAMED_CARDS = { saboteur: 'engineer' };
 function sanitizeRecipe(saved){
   var r = emptyRecipe();
+  if (saved) Object.keys(RENAMED_CARDS).forEach(function(old){
+    if (typeof saved[old] === 'number' && typeof saved[RENAMED_CARDS[old]] !== 'number') saved[RENAMED_CARDS[old]] = saved[old];
+  });
   if (saved) Object.keys(r).forEach(function(k){
     if (typeof saved[k] === 'number') r[k] = Math.max(0, Math.min(MAX_COPIES, Math.round(saved[k])));
   });
