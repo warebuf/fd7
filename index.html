@@ -45,6 +45,8 @@
   .con-pending{ text-transform:none; letter-spacing:0; }
   .structure-row{ display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
   .structure-pill{ font-size:.7rem; border-color:var(--support); color:var(--support); font-weight:600; }
+  .structure-btn{ border-color:var(--support); color:var(--support); }
+  .structure-btn.picking, .structure-btn.ready{ background:var(--support); color:var(--bg); }
   .deck-row .num.zero{ color:var(--text-dim); opacity:.5; }
   .deck-row .num.key{ color:var(--role); font-weight:600; }
   .deck-row.r-attacker{ --role:var(--danger); }
@@ -77,6 +79,7 @@
   .tile .line{ font-size:.64rem; color:var(--text-dim); }
   .tile .line.hot{ color:var(--role); font-weight:600; }
   .tile.next{ box-shadow:0 0 0 2px var(--side); }
+  .tile.targetable{ outline:2px dashed var(--support); outline-offset:3px; cursor:crosshair; }
   .next-tag{
     position:absolute; top:-8px; left:50%; transform:translateX(-50%); font-family:'Chakra Petch',sans-serif;
     font-weight:700; font-size:.55rem; letter-spacing:.08em; padding:0 6px; border-radius:999px; background:var(--side); color:var(--bg);
@@ -261,6 +264,7 @@
   function onSlotClick(side, slot){
     var u = state.players[side].units[slot];
     if (!u) return;
+    if (state.targeting && state.targeting.side === side) return activateStructure(side, state.targeting.index, slot);
     state.inspected = { card: u.card, side: side, slot: slot };
     render();
   }
@@ -680,7 +684,7 @@
     fxAttack(side, slot, dSide, tSlot);
     var dealt = dealDamage(dSide, tSlot, amount, type, label);
     if (dp.units[tSlot] !== victim && opts.onKill) opts.onKill(victim);
-    if (state.players[side].units[slot] === u) fireStructures(side, 'attack', slot);
+    chargeStructures(side, 'attack');
     return dealt;
   }
 
@@ -696,10 +700,10 @@
     var p = state.players[side], u = p.units[slot];
     var dealt = mitigated(amount, type, side, slot);
     u.hp -= dealt;
+    if (dealt > 0) chargeStructures(side, 'damaged');
     fxFloat(side, slot, '−' + dealt, 'dmg');
     var note = dealt === amount ? '' : ' (' + amount + ' ' + type + ', ' + (type === 'physical' ? 'armor' : 'MR') + ' blocked ' + (amount - dealt) + ')';
     addLog('t' + state.tick + ': ' + label + ' hits ' + p.name + "'s " + u.card.name + ' for ' + dealt + note + '.', 'attack');
-    if (dealt > 0 && u.hp > 0) fireStructures(side, 'damaged', slot);
     if (u.hp <= 0) killUnit(side, slot);
     return dealt;
   }
@@ -724,6 +728,7 @@
     o.hp = Math.min(o.maxHp, o.hp + amount);
     var healed = o.hp - before;
     if (healed) fxFloat(side, best, '+' + healed, 'heal');
+    chargeStructures(side, 'heal');
     if (clinics && over){
       o.maxHp += over * clinics;
       o.hp += over;
@@ -733,13 +738,16 @@
       (healed ? ' for ' + healed : '') +
       (clinics && over ? (healed ? ', and the' : ': the') + ' Overflow Clinic turns ' + over + ' overheal into +' + over * clinics + ' max HP (' + o.hp + '/' + o.maxHp + ')' : '') +
       '.', 'heal');
-    fireStructures(side, 'heal', p.units.indexOf(u));
   }
 
   // ---------- Construction & structures ----------
-  function structureCount(p, key){ return p.structures.filter(function(k){ return k === key; }).length; }
-  // Every triggered structure on `side` matching this event fires once per copy, paying its `spend` from the
-  // construction pool each time (skipped if the pool can't pay). slot is the ally the event happened to.
+  // p.structures holds one { key, charges } per built copy.
+  function structureCount(p, key){ return p.structures.filter(function(s){ return s.key === key; }).length; }
+  // Every copy whose gain event matches gets a charge.
+  function chargeStructures(side, event){
+    state.players[side].structures.forEach(function(s){ if (STRUCTURE_DEFS[s.key].gain === event) s.charges++; });
+  }
+  // Effects when a charged structure is activated; each returns a description for the log.
   var STRUCTURE_EFFECTS = {
     wardrum: function(p, side){
       p.units.forEach(function(a, i){ if (a){ a.roundAd = (a.roundAd || 0) + 2; fxFloat(side, i, '+2 AD', 'buff'); } });
@@ -756,22 +764,36 @@
       return a.card.name + ' +3 AD (now ' + adOf(a) + ')';
     }
   };
-  function fireStructures(side, trigger, slot){
-    var p = state.players[side];
-    if (!p.units[slot]) return;
-    p.structures.forEach(function(key){
-      var def = STRUCTURE_DEFS[key];
-      if (def.trigger !== trigger || p.con < def.spend || !p.units[slot]) return;
-      p.con -= def.spend;
-      var what = STRUCTURE_EFFECTS[key](p, side, slot);
-      addLog(p.name + "'s " + def.name + ' (−' + def.spend + ' construction, ' + p.con + ' left): ' + what + '.', 'heal');
-    });
+  function canActivate(p, i){
+    var s = p.structures[i], def = s && STRUCTURE_DEFS[s.key];
+    return !!(def && def.spend) && (state.phase === 'setup' || state.phase === 'battle') && s.charges >= def.spend && p.units.some(Boolean);
+  }
+  // Clicking a built structure: activate it, or for a targeted one (Blood Engine) start picking an ally — clicking
+  // it again cancels.
+  function onStructureClick(side, i){
+    var p = state.players[side], def = STRUCTURE_DEFS[p.structures[i].key];
+    if (state.targeting && state.targeting.side === side && state.targeting.index === i){ state.targeting = null; render(); return; }
+    if (!canActivate(p, i)) return;
+    if (def.target === 'ally'){ state.targeting = { side: side, index: i }; render(); return; }
+    activateStructure(side, i);
+  }
+  function activateStructure(side, i, slot){
+    var p = state.players[side], s = p.structures[i], def = STRUCTURE_DEFS[s.key];
+    state.targeting = null;
+    if (!canActivate(p, i) || (def.target === 'ally' && !p.units[slot])){ render(); return; }
+    s.charges -= def.spend;
+    clearFx();
+    var what = STRUCTURE_EFFECTS[s.key](p, side, slot);
+    addLog((state.phase === 'battle' ? 't' + state.tick + ': ' : '') + p.name + ' activates ' + def.name + ' (−' + def.spend + ' charges, ' + s.charges + ' left): ' + what + '.', 'heal');
+    state.inspected = { structure: s.key, side: side, index: i };
+    render();
+    playEvents();
   }
   function build(side, key){
     var p = state.players[side], def = STRUCTURE_DEFS[key];
     if (state.phase !== 'setup' || p.con < def.cost) return;
     p.con -= def.cost;
-    p.structures.push(key);
+    p.structures.push({ key: key, charges: 0 });
     addLog(p.name + ' builds ' + def.name + ' (' + p.con + ' construction left).', 'heal');
     render();
   }
@@ -811,6 +833,7 @@
       p.hand = [];
       p.units = new Array(UNIT_SLOTS).fill(null);
     });
+    state.targeting = null;
     state.round++;
     state.tick = 0;
     state.spotlight = null;
@@ -878,7 +901,8 @@
     var cdPct = state.phase === 'battle' ? chargeShown(side, slot, state.tick) : 0;
     var arm = armorOf(side, slot), mr = mrOf(side, slot);
     var buffed = arm !== card.armor || cd !== card.cooldown;
-    var tile = el('div', 'tile r-' + card.role + (isNext && !clock ? ' next' : ''), {
+    var targetable = !!(state.targeting && state.targeting.side === side);
+    var tile = el('div', 'tile r-' + card.role + (isNext && !clock ? ' next' : '') + (targetable ? ' targetable' : ''), {
       'data-unit': side + '-' + slot, tabindex: '0', role: 'button', title: card.name
     });
     tile.innerHTML = prioBadge(side, slot) + (isNext ? '<div class="next-tag">NEXT</div>' : '') +
@@ -924,27 +948,35 @@
     return row;
   }
 
-  // Construction pool, built structures, and (in setup) a Build button per structure.
-  // Construction pool, built structures, and (in setup) a Build button per structure. Hovering any of them shows
-  // the structure in Card Info.
+  // Construction pool, built structures (each a button showing its charges), and in setup a Build button per
+  // structure. Hovering any of them shows the structure in Card Info.
   function renderStructures(side, panel){
     var p = state.players[side];
     var sec = panel.appendChild(el('div', 'structures', {}));
     sec.innerHTML = '<div class="row-label">Construction <b class="mono">' + p.con + '</b></div>';
     var builtRow = sec.appendChild(el('div', 'structure-row', {}));
-    var owned = Object.keys(STRUCTURE_DEFS).filter(function(k){ return structureCount(p, k); });
-    if (!owned.length) builtRow.appendChild(el('span', 'empty-note', {})).textContent = 'No structures built.';
-    owned.forEach(function(k){
-      var def = STRUCTURE_DEFS[k], n = structureCount(p, k);
-      var pill = builtRow.appendChild(el('span', 'pill structure-pill', { tabindex: '0' }));
-      pill.textContent = def.icon + ' ' + def.name + (n > 1 ? ' ×' + n : '');
-      hoverInspect(pill, function(){ return { structure: k, side: side }; });
+    if (!p.structures.length) builtRow.appendChild(el('span', 'empty-note', {})).textContent = 'No structures built.';
+    p.structures.forEach(function(s, i){
+      var def = STRUCTURE_DEFS[s.key];
+      // wrapped, because disabled buttons don't get hover events in every browser
+      var wrap = builtRow.appendChild(el('span', '', {}));
+      hoverInspect(wrap, function(){ return { structure: s.key, side: side, index: i }; });
+      if (!def.spend){
+        wrap.appendChild(el('span', 'pill structure-pill', {})).textContent = def.icon + ' ' + def.name + ' · always on';
+        return;
+      }
+      var picking = state.targeting && state.targeting.side === side && state.targeting.index === i;
+      var ready = canActivate(p, i);
+      var b = wrap.appendChild(el('button', 'btn small structure-btn' + (picking ? ' picking' : ready ? ' ready' : ''), { type: 'button' }));
+      b.textContent = picking ? def.icon + ' ' + def.name + ' — pick an ally (click to cancel)'
+        : def.icon + ' ' + def.name + ' · ' + Math.min(s.charges, 99) + '/' + def.spend;
+      b.disabled = !picking && !ready;
+      b.addEventListener('click', function(){ onStructureClick(side, i); });
     });
     if (state.phase !== 'setup') return;
     var row = sec.appendChild(el('div', 'structure-row', {}));
     Object.keys(STRUCTURE_DEFS).forEach(function(k){
       var def = STRUCTURE_DEFS[k];
-      // wrapped, because disabled buttons don't get hover events in every browser
       var wrap = row.appendChild(el('span', '', {}));
       var b = wrap.appendChild(el('button', 'btn small', { type: 'button' }));
       b.textContent = 'Build ' + def.icon + ' ' + def.name + ' · ' + def.cost;
@@ -954,19 +986,22 @@
     });
   }
 
-  var TRIGGER_TEXT = { attack: 'one of your units attacks', heal: 'one of your units heals', damaged: 'one of your units takes damage' };
-  // Card Info for a structure: what it does, what it costs, and how many this player owns.
-  function structureInfoHtml(key, p){
-    var def = STRUCTURE_DEFS[key], n = structureCount(p, key);
-    var when = def.trigger
-      ? 'Triggers when ' + TRIGGER_TEXT[def.trigger] + ' · costs ' + def.spend + ' construction each time'
-      : 'Always on · free to run';
+  // Card Info for a structure: its description, build cost, and — for a built copy — its charges.
+  function structureInfoHtml(key, p, index){
+    var def = STRUCTURE_DEFS[key], n = structureCount(p, key), s = index != null ? p.structures[index] : null;
+    var pills = ['Build ' + def.cost];
+    if (def.spend) pills.push(s ? 'Charges ' + s.charges + '/' + def.spend : 'Needs ' + def.spend + ' charges');
+    else pills.push('Always on');
+    pills.push(n ? 'Owned ×' + n : 'Not built');
+    var footer = s && def.spend
+      ? (s.charges >= def.spend ? 'Ready: click it to spend ' + def.spend + ' charges' + (def.target === 'ally' ? ', then click the ally to boost' : '') + '.'
+                                : (def.spend - s.charges) + ' more charge' + (def.spend - s.charges === 1 ? '' : 's') + ' until it can be activated.')
+      : 'Construction pool ' + p.con + (n > 1 ? ' · each copy charges and activates on its own' : '');
     return '<div class="inspector-title"><div class="inspector-icon">' + def.icon + '</div>' +
-      '<div><div class="inspector-name">' + def.name + '</div><div class="inspector-role">Structure · builds for ' + def.cost + ' construction</div></div></div>' +
-      '<div class="inspector-stats"><span class="stat-pill">' + when + '</span></div>' +
+      '<div><div class="inspector-name">' + def.name + '</div><div class="inspector-role">Structure</div></div></div>' +
+      '<div class="inspector-stats">' + pills.map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
       '<div class="inspector-effect">' + def.text + '</div>' +
-      '<div class="inspector-live">' + p.name + (n ? ' owns ' + n + (n > 1 ? ' — their effects stack' : '') : ' has not built one') +
-      ' · construction pool ' + p.con + '</div>';
+      '<div class="inspector-live">' + footer + '</div>';
   }
 
   function renderPanel(side, next){
@@ -1001,7 +1036,7 @@
   function hoverInspect(elem, getInfo){
     var show = function(){
       var info = getInfo(), cur = state.inspected;
-      if (!info || (cur && cur.card === info.card && cur.structure === info.structure && cur.side === info.side && cur.slot === info.slot)) return;
+      if (!info || (cur && cur.card === info.card && cur.structure === info.structure && cur.index === info.index && cur.side === info.side && cur.slot === info.slot)) return;
       state.inspected = info;
       renderInspector();
     };
@@ -1020,7 +1055,7 @@
     }
     if (ins.structure){
       box.className = 'inspector r-support';
-      body.innerHTML = structureInfoHtml(ins.structure, state.players[ins.side]);
+      body.innerHTML = structureInfoHtml(ins.structure, state.players[ins.side], ins.index);
       return;
     }
     box.className = 'inspector r-' + ins.card.role;
@@ -1099,8 +1134,10 @@
     else nextRound();
   });
   document.getElementById('resetBtn').addEventListener('click', newGame);
-  // Space works the main button (start / pause / resume / next round), unless a control has focus
+  // Space works the main button (start / pause / resume / next round), unless a control has focus. Esc cancels
+  // picking a target for a structure.
   document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && state.targeting){ state.targeting = null; render(); return; }
     if (e.key !== ' ' || e.target.closest('button, a, [role="button"], input, select, textarea')) return;
     e.preventDefault();
     document.getElementById('mainBtn').click();
