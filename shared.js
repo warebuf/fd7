@@ -21,7 +21,7 @@ var CARD_DEFS = {
       { id:'heavy',   name:'Heavy attack', short:'HEAVY',   text:'Hits a random enemy for 150% of its AD.' },
       { id:'execute', name:'Execute',      short:'EXECUTE', text:'Attack the most damaged enemy (lowest HP %) for 100% AD.' }
     ] },
-  medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer', prefers:'middle',   hp:50, ad:0,  ap:10, armor:5, mr:25, as:1, con:5,
+  medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer', prefers:'middle',   hp:30, ad:0,  ap:6, armor:5, mr:25, as:0.5, con:10,
     abilities:[
       { id:'heal',   name:'Heal',    short:'HEAL', text:'Heals your weakest ally for 100% AP.' },
       { id:'adbuff', name:'AD buff', short:'+AD',  text:'Gives every friendly on-field unit +3 AD permanently.' },
@@ -67,8 +67,8 @@ var DECK_STORAGE_KEY = 'fd7-deck-recipes';
 // built; each copy works on its own (see index.html).
 // Resonance Spire: counts the HP your side heals; at `heal` it is primed, and your next attack hits every enemy.
 var STRUCTURE_DEFS = {
-  spire: { key:'spire', name:'Resonance Spire', icon:'◈', cost:60, heal:30,
-    text:'After your allies restore 30 HP, your next attack hits every enemy.' }
+  spire: { key:'spire', name:'Resonance Spire', icon:'◈', cost:60, heal:18,
+    text:'After your allies restore 18 HP, your next attack hits every enemy, even through Taunt.' }
 };
 
 function el(tag, cls, attrs){
