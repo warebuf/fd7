@@ -64,20 +64,11 @@ var SLOT_LINES = ['front', 'front', 'middle', 'back'];
 var DECK_STORAGE_KEY = 'fd7-deck-recipes';
 
 // Structures are built in setup with your construction pool and stay for the rest of the game. Any number can be
-// built, duplicates included; their effects stack. Effects apply to your own side (see index.html).
-// Charged structures: each built copy gains a charge whenever its `gain` event happens to your side ('attack',
-// 'heal' or 'damaged'). Once it has `spend` charges, its owner can activate it whenever they like (setup or
-// battle) to spend them. `target:'ally'` means the player picks which of their units it affects. Bonuses last for
-// the round; charges carry over. Structures without `spend` are always on.
+// built; each copy works on its own (see index.html).
+// Resonance Spire: counts the HP your side heals; at `heal` it is primed, and your next attack hits every enemy.
 var STRUCTURE_DEFS = {
-  clinic: { key:'clinic', name:'Overflow Clinic', icon:'✙', cost:60,
-    text:'Healing beyond a unit\'s max HP raises its max HP by the excess, for the round. Heals can also target full-HP units.' },
-  wardrum: { key:'wardrum', name:'War Drum', icon:'♫', cost:60, gain:'attack', spend:3,
-    text:'When your unit attacks, gain a charge. Spend 3 charges: give all allies +2 AD for the round.' },
-  shrine: { key:'shrine', name:'Growth Shrine', icon:'❦', cost:60, gain:'heal', spend:3,
-    text:'When your unit heals, gain a charge. Spend 3 charges: give all allies +5 maximum HP for the round.' },
-  bloodengine: { key:'bloodengine', name:'Blood Engine', icon:'❂', cost:60, gain:'damaged', spend:3, target:'ally',
-    text:'When your unit takes damage, gain a charge. Spend 3 charges: give an ally of your choice +3 AD for the round.' }
+  spire: { key:'spire', name:'Resonance Spire', icon:'◈', cost:60, heal:30,
+    text:'After your allies restore 30 HP, your next attack hits every enemy.' }
 };
 
 function el(tag, cls, attrs){
