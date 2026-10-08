@@ -21,7 +21,7 @@ var CARD_DEFS = {
       { id:'heavy',   name:'Heavy attack', short:'HEAVY',   text:'Hits a random enemy for 150% of its AD.' },
       { id:'execute', name:'Execute',      short:'EXECUTE', text:'Attack the most damaged enemy (lowest HP %) for 100% AD.' }
     ] },
-  medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer', prefers:'middle',   hp:30, ad:0,  ap:10, armor:5, mr:25, as:0.5, con:10,
+  medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer', prefers:'middle',   hp:30, ad:0,  ap:15, armor:5, mr:25, as:0.5, con:10,
     abilities:[
       { id:'heal',   name:'Heal',    short:'HEAL', text:'Heals your weakest ally for 100% AP.' },
       { id:'adbuff', name:'AD buff', short:'+AD',  text:'Gives every friendly on-field unit +3 AD permanently.' },
