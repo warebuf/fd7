@@ -8,7 +8,7 @@
 //   as     attack speed — actions per second, one second being TICKS_PER_SECOND ticks (0 = never acts)
 //   con    construction — each Construct action adds this much to your construction pool, which pays for
 //          structures (STRUCTURE_DEFS)
-// `prefers` is the line ('front', 'middle', 'back') a unit is placed on first when the board is filled each round.
+// `prefers` is the line ('front', 'middle', 'back') a unit is summoned to when its hand card is double-clicked.
 // Every unit has a list of `abilities`; each round its owner picks which one it uses (ids resolve in ABILITIES in
 // index.html). An ability with `lines` can only be used from slots on those lines ('front', 'middle', 'back');
 // a `passive` one is never acted out — it works just by the unit being on the board (Warden's Taunt).
@@ -21,7 +21,7 @@ var CARD_DEFS = {
       { id:'heavy',   name:'Heavy attack', short:'HEAVY',   text:'Hits a random enemy for 150% of its AD.' },
       { id:'execute', name:'Execute',      short:'EXECUTE', text:'Attack the most damaged enemy (lowest HP %) for 100% AD.' }
     ] },
-  medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer', prefers:'middle',   hp:30, ad:0,  ap:6, armor:5, mr:25, as:0.5, con:10,
+  medic:     { key:'medic',     name:'Medic',     icon:'✚', role:'healer', prefers:'middle',   hp:30, ad:0,  ap:10, armor:5, mr:25, as:0.5, con:10,
     abilities:[
       { id:'heal',   name:'Heal',    short:'HEAL', text:'Heals your weakest ally for 100% AP.' },
       { id:'adbuff', name:'AD buff', short:'+AD',  text:'Gives every friendly on-field unit +3 AD permanently.' },
@@ -52,9 +52,12 @@ Object.keys(CARD_DEFS).forEach(function(k){
   c.abilities.push(CONSTRUCT, NO_ACTION);
 });
 
-var DECK_SIZE = 12;   // every deck is exactly this many cards
-var HAND_SIZE = 6;    // cards drawn each round; 4 of them are placed (see autoPlace in index.html)
-var DEFAULT_RECIPE = { striker:3, medic:3, predator:2, warden:2, engineer:2 };
+// A deck is exactly DECK_SIZE unit cards plus STRUCTURE_CARDS structure cards. Each round the hand is topped up
+// to HAND_UNITS units and HAND_STRUCTURES structure cards (drawn from the two halves of the deck).
+var DECK_SIZE = 12;
+var STRUCTURE_CARDS = 6;
+var HAND_UNITS = 3, HAND_STRUCTURES = 2;
+var DEFAULT_RECIPE = { striker:3, medic:3, predator:2, warden:2, engineer:2, spire:6 };
 var MAX_COPIES = 6;
 // The board slots by index, front to back: two front-line slots, one middle, one back. Attacks land on the
 // frontmost unit by default. On screen each side's front faces the middle, so the left player's board is drawn
@@ -119,19 +122,31 @@ function cardInfoHtml(card, activeId, pickable, slot){
     effect;
 }
 
+// Card Info body for a structure card (not yet placed).
+function structureCardHtml(def){
+  return '<div class="inspector-title"><div class="inspector-icon">' + def.icon + '</div>' +
+    '<div><div class="inspector-name">' + def.name + '</div><div class="inspector-role">Structure card</div></div></div>' +
+    '<div class="inspector-stats"><span class="stat-pill mono">Build ' + def.cost + ' CON</span></div>' +
+    '<div class="inspector-effect">' + def.text + '</div>' +
+    '<div class="inspector-live">Play it to start building; your units\' Construct actions finish it.</div>';
+}
+
 // ---------- Deck recipes: { cardKey: copies }, one per player, kept in localStorage ----------
+// Every card a deck can hold: unit keys (CARD_DEFS) and structure keys (STRUCTURE_DEFS).
+function isStructureKey(k){ return !!STRUCTURE_DEFS[k]; }
+function allCardKeys(){ return Object.keys(CARD_DEFS).concat(Object.keys(STRUCTURE_DEFS)); }
+function unitCount(recipe){ return Object.keys(CARD_DEFS).reduce(function(a, k){ return a + (recipe[k] || 0); }, 0); }
+function structureCardCount(recipe){ return Object.keys(STRUCTURE_DEFS).reduce(function(a, k){ return a + (recipe[k] || 0); }, 0); }
+function deckIsValid(recipe){ return unitCount(recipe) === DECK_SIZE && structureCardCount(recipe) === STRUCTURE_CARDS; }
 function emptyRecipe(){
   var r = {};
-  Object.keys(CARD_DEFS).forEach(function(k){ r[k] = 0; });
+  allCardKeys().forEach(function(k){ r[k] = 0; });
   return r;
 }
 function defaultRecipe(){
   var r = emptyRecipe();
   Object.keys(DEFAULT_RECIPE).forEach(function(k){ r[k] = DEFAULT_RECIPE[k]; });
   return r;
-}
-function deckTotal(recipe){
-  return Object.keys(recipe).reduce(function(a, k){ return a + recipe[k]; }, 0);
 }
 // Old card keys in saved decks, mapped to their current name.
 var RENAMED_CARDS = { saboteur: 'engineer' };
@@ -148,10 +163,12 @@ function sanitizeRecipe(saved){
 function loadDeckRecipes(){
   try {
     var parsed = JSON.parse(localStorage.getItem(DECK_STORAGE_KEY));
-    // a saved deck that isn't exactly DECK_SIZE cards (e.g. from before the size rule) falls back to the default
+    // a saved deck of 12 units and no structures (from before structure cards) gets the default structures;
+    // any other deck that doesn't fit the rules falls back to the default
     if (Array.isArray(parsed) && parsed.length === 2) return parsed.map(function(saved){
       var r = sanitizeRecipe(saved);
-      return deckTotal(r) === DECK_SIZE ? r : defaultRecipe();
+      if (unitCount(r) === DECK_SIZE && structureCardCount(r) === 0) Object.keys(STRUCTURE_DEFS).forEach(function(k){ r[k] = DEFAULT_RECIPE[k] || 0; });
+      return deckIsValid(r) ? r : defaultRecipe();
     });
   } catch (e){}
   return [defaultRecipe(), defaultRecipe()];

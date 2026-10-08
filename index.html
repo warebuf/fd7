@@ -39,7 +39,15 @@
   .deck-row .nm{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .deck-row .nm small{ color:var(--side); font-size:.6rem; font-weight:600; margin-left:5px; letter-spacing:.04em; }
   .deck-row .num{ font-size:.68rem; }
-  .deck-row.benched{ opacity:.55; }
+  .deck-row{ cursor:pointer; }
+  .deck-row.picked{ outline:2px solid var(--side); }
+  .deck-row.locked{ opacity:.55; cursor:default; }
+  .deck-row.struct-card{ --role:var(--support); grid-template-columns:18px 18px minmax(0,1fr) auto; }
+  .deck-row .place{ padding:2px 8px; font-size:.64rem; }
+  .structure-pill.building{ border-style:dashed; font-weight:500; }
+  .slot-empty.target{ outline:2px dashed var(--side); outline-offset:-2px; cursor:pointer; }
+  .tile .new-tag{ position:absolute; bottom:-8px; left:50%; transform:translateX(-50%); font-size:.55rem; font-weight:700; letter-spacing:.06em;
+    background:var(--side); color:var(--bg); border-radius:999px; padding:0 6px; }
   .structures{ display:flex; flex-direction:column; gap:4px; }
   .structures .row-label b{ color:var(--text); font-size:.7rem; }
   .con-pending{ text-transform:none; letter-spacing:0; }
@@ -188,10 +196,12 @@
   var cardUid = 0;
 
   // ---------- Setup of a game ----------
+  // A card in a deck: a unit (CARD_DEFS) or a structure card (STRUCTURE_DEFS, type 'structure').
   function makeCard(key){
     var c = { uid: 'c' + (cardUid++) };
-    var def = CARD_DEFS[key];
+    var def = CARD_DEFS[key] || STRUCTURE_DEFS[key];
     for (var k in def) c[k] = def[k];
+    if (STRUCTURE_DEFS[key]) c.type = 'structure';
     return c;
   }
   function shuffle(arr){
@@ -201,14 +211,19 @@
     }
     return arr;
   }
-  function buildDeck(recipe){
-    var deck = [];
-    Object.keys(recipe).forEach(function(k){ for (var i = 0; i < recipe[k]; i++) deck.push(makeCard(k)); });
-    return shuffle(deck);
+  function buildPile(recipe, keys){
+    var pile = [];
+    keys.forEach(function(k){ for (var i = 0; i < (recipe[k] || 0); i++) pile.push(makeCard(k)); });
+    return shuffle(pile);
   }
-  // Each player has a shuffled 12-card deck.
+  // Each player's deck is split into a unit pile and a structure pile, so the hand can always be topped up to
+  // HAND_UNITS units + HAND_STRUCTURES structure cards. The board persists between rounds.
   function newPlayer(name, recipe){
-    return { name: name, deck: buildDeck(recipe), hand: [], discard: [], con: 0, structures: [], units: new Array(UNIT_SLOTS).fill(null) };
+    return {
+      name: name, deck: buildPile(recipe, Object.keys(CARD_DEFS)), structureDeck: buildPile(recipe, Object.keys(STRUCTURE_DEFS)),
+      hand: [], structureHand: [], discard: [], con: 0, structures: [], summoned: false,
+      units: new Array(UNIT_SLOTS).fill(null)
+    };
   }
   function newGame(){
     stopClock();
@@ -218,10 +233,11 @@
       fx: newFx(),      // animations recorded this tick, played after the board redraws
       spotlight: null,  // { title, side, fromSeq } — the action panel shows log lines from fromSeq on
       inspected: null,  // { card, side, slot } — slot set when it is a unit on the board
+      selected: null,   // { side, pos } of the hand unit being summoned
       players: [newPlayer('Player 1', recipes[0]), newPlayer('Player 2', recipes[1])]
     };
-    addLog('Round 1: each player draws ' + HAND_SIZE + ' and ' + UNIT_SLOTS + ' are placed, preferred positions first. Switch abilities if you like, then start the battle.', 'meta');
-    dealUnits();
+    state.players.forEach(topUpHand);
+    addLog('Round 1: each player draws ' + HAND_UNITS + ' units and ' + HAND_STRUCTURES + ' structure cards. Summon 1 unit, place structures if you like, then start the battle.', 'meta');
     logTurnOrder();
     render();
   }
@@ -231,38 +247,75 @@
     if (state.log.length > 300) state.log.shift();
   }
 
-  // ---------- Setup phase: draw, then place by preference ----------
-  // Each round a player draws HAND_SIZE cards (the discard pile is shuffled back in first if the deck is too thin).
-  // Then the board fills in two passes: first, each slot (front to back) takes a drawn card that prefers its line;
-  // then any slot still empty takes whatever is left. Ties between cards are broken at random. The rest sit on
-  // the bench this round.
-  function drawHand(p){
-    if (p.deck.length < HAND_SIZE && p.discard.length){
-      p.deck = shuffle(p.deck.concat(p.discard));
-      p.discard = [];
-      addLog(p.name + ' is running low — the discard pile is shuffled back into the deck.', 'meta');
+  // ---------- Setup: draw, summon one unit, place structures ----------
+  // The hand keeps whatever wasn't played and is topped up each round. Dead units go to the discard pile, which is
+  // shuffled back into the unit pile when it runs out. Placed structure cards are used up.
+  function topUpHand(p){
+    while (p.hand.length < HAND_UNITS){
+      if (!p.deck.length && p.discard.length){
+        p.deck = shuffle(p.discard); p.discard = [];
+        addLog(p.name + ' shuffles their discard pile back into the deck.', 'meta');
+      }
+      if (!p.deck.length) break;
+      p.hand.push(p.deck.pop());
     }
-    p.hand = p.deck.splice(0, HAND_SIZE);
+    while (p.structureHand.length < HAND_STRUCTURES && p.structureDeck.length) p.structureHand.push(p.structureDeck.pop());
   }
-  function autoPlace(p){
-    var left = shuffle(p.hand.slice());
-    p.units = new Array(UNIT_SLOTS).fill(null);
-    SLOT_LINES.forEach(function(line, slot){
-      var at = left.findIndex(function(c){ return c.prefers === line; });
-      if (at !== -1) p.units[slot] = newUnit(left.splice(at, 1)[0], slot);
-    });
-    SLOT_LINES.forEach(function(line, slot){
-      if (!p.units[slot] && left.length) p.units[slot] = newUnit(left.shift(), slot);
-    });
+  function canSummon(p){ return state.phase === 'setup' && !p.summoned && p.units.some(function(u){ return !u; }); }
+  function onHandClick(side, pos){
+    var p = state.players[side], card = p.hand[pos];
+    if (!card) return;
+    state.inspected = { card: card, side: side };
+    if (canSummon(p)){
+      var sel = state.selected;
+      state.selected = (sel && sel.side === side && sel.pos === pos) ? null : { side: side, pos: pos };
+    }
+    render();
   }
-  function onBoard(p, card){ return p.units.some(function(u){ return u && u.card === card; }); }
-  function dealUnits(){
-    state.players.forEach(function(p){ drawHand(p); autoPlace(p); });
+  // Double-click: summon into an empty slot on the unit's preferred line, or the first empty slot.
+  function onHandDoubleClick(side, pos){
+    var p = state.players[side];
+    if (!p.hand[pos] || !canSummon(p)) return;
+    var slot = SLOT_LINES.findIndex(function(line, i){ return line === p.hand[pos].prefers && !p.units[i]; });
+    if (slot === -1) slot = p.units.indexOf(null);
+    summon(side, pos, slot);
+  }
+  function summon(side, pos, slot){
+    var p = state.players[side];
+    if (!canSummon(p) || p.units[slot] || !p.hand[pos]) return;
+    var card = p.hand.splice(pos, 1)[0];
+    p.units[slot] = newUnit(card, slot);
+    p.units[slot].summonedNow = true;
+    p.summoned = true;
+    state.selected = null;
+    state.inspected = { card: card, side: side, slot: slot };
+    render();
   }
   function onSlotClick(side, slot){
-    var u = state.players[side].units[slot];
-    if (!u) return;
+    var p = state.players[side], u = p.units[slot];
+    if (!u){
+      if (state.selected && state.selected.side === side) summon(side, state.selected.pos, slot);
+      return;
+    }
+    // the unit summoned this round can be taken back before the battle starts
+    if (state.phase === 'setup' && u.summonedNow){
+      p.units[slot] = null; p.hand.push(u.card); p.summoned = false;
+      state.inspected = { card: u.card, side: side };
+      render();
+      return;
+    }
     state.inspected = { card: u.card, side: side, slot: slot };
+    render();
+  }
+  // Playing a structure card puts the structure down unfinished; construction finishes it.
+  function placeStructure(side, pos){
+    var p = state.players[side], card = p.structureHand[pos];
+    if (state.phase !== 'setup' || !card) return;
+    p.structureHand.splice(pos, 1);
+    p.structures.push({ key: card.key, built: 0, done: false, progress: 0, primed: false });
+    addLog(p.name + ' starts building ' + card.name + ' (needs ' + card.cost + ' construction).', 'meta');
+    applyConstruction(side);
+    state.inspected = { structure: card.key, side: side, index: p.structures.length - 1 };
     render();
   }
   // A placed unit starts with the ability its card used last time if it is usable from this slot, otherwise
@@ -311,7 +364,8 @@
     state.phase = 'battle';
     state.tick = 0;
     state.queue = [];
-    state.fielded = [].concat.apply([], state.players.map(function(p){ return p.units.filter(Boolean).map(function(u){ return u.card; }); }));
+    state.selected = null;
+    state.players.forEach(function(p){ p.units.forEach(function(u){ if (u) u.summonedNow = false; }); });
     state.spotlight = { title: 'Battle begins', fromSeq: state.logSeq };
     addLog('Round ' + state.round + ': battle begins.', 'meta');
     if (!checkForWipe()) startClock();   // a side that fielded no units loses on the spot
@@ -651,7 +705,8 @@
       var p = state.players[side];
       p.con += u.card.con || 0;
       fxFloat(side, slot, '+' + (u.card.con || 0) + ' CON', 'buff');
-      say(side, u, 'constructs: +' + (u.card.con || 0) + ' construction (' + p.name + ' now has ' + p.con + ').', 'heal');
+      say(side, u, 'constructs: +' + (u.card.con || 0) + ' construction.', 'heal');
+      applyConstruction(side);
     }
   };
 
@@ -716,6 +771,7 @@
     var p = state.players[side], u = p.units[slot];
     if (!u) return;
     p.units[slot] = null;
+    p.discard.push(u.card);
     fxFloat(side, slot, 'DEFEATED', 'dmg');
     addLog('t' + state.tick + ': ' + p.name + "'s " + u.card.name + ' is destroyed.', 'destroy');
   }
@@ -736,14 +792,27 @@
   }
 
   // ---------- Construction & structures ----------
-  // p.structures holds one { key, progress, primed } per built copy.
-  function structureCount(p, key){ return p.structures.filter(function(s){ return s.key === key; }).length; }
-  // Each Spire counts HP restored by your heals; reaching its target primes it (extra healing carries over).
+  // p.structures holds one { key, built, done, progress, primed } per placed copy: `built` is construction put in so
+  // far (done at the structure's cost); `progress`/`primed` are a finished Spire's healing count.
+  // Construction from the pool goes into unfinished structures, oldest first; what's left stays in the pool.
+  function applyConstruction(side){
+    var p = state.players[side];
+    p.structures.forEach(function(s){
+      if (s.done || !p.con) return;
+      var def = STRUCTURE_DEFS[s.key], put = Math.min(p.con, def.cost - s.built);
+      s.built += put; p.con -= put;
+      if (s.built >= def.cost){
+        s.done = true;
+        addLog(p.name + "'s " + def.name + ' is finished!', 'heal');
+      }
+    });
+  }
+  // Each finished Spire counts HP restored by your heals; reaching its target primes it (extra healing carries over).
   function feedSpires(side, healed){
     var p = state.players[side];
     p.structures.forEach(function(s){
       var def = STRUCTURE_DEFS[s.key];
-      if (!def.heal || !healed) return;
+      if (!s.done || !def.heal || !healed) return;
       s.progress += healed;
       if (!s.primed && s.progress >= def.heal){
         s.primed = true;
@@ -754,19 +823,11 @@
   }
   // Uses up one primed Spire on this side, if any. A Spire with enough stored healing primes again straight away.
   function consumeSpire(side){
-    var s = state.players[side].structures.filter(function(x){ return x.primed; })[0];
+    var s = state.players[side].structures.filter(function(x){ return x.done && x.primed; })[0];
     if (!s) return false;
     s.primed = false;
     if (s.progress >= STRUCTURE_DEFS[s.key].heal){ s.primed = true; s.progress -= STRUCTURE_DEFS[s.key].heal; }
     return true;
-  }
-  function build(side, key){
-    var p = state.players[side], def = STRUCTURE_DEFS[key];
-    if (state.phase !== 'setup' || p.con < def.cost) return;
-    p.con -= def.cost;
-    p.structures.push({ key: key, progress: 0, primed: false });
-    addLog(p.name + ' builds ' + def.name + ' (' + p.con + ' construction left).', 'heal');
-    render();
   }
 
   // ---------- Rounds ----------
@@ -793,16 +854,19 @@
     state.phase = 'roundEnd';
     render();
   }
-  // Every round is a fresh fight: the cards that were fielded (alive or dead) go to the discard pile, the bench is
-  // shuffled back into the deck, and a new hand is drawn and placed.
+  // Between rounds the board stays: survivors are healed to full and lose this round's delays and jams. Each
+  // player tops up their hand and may summon one more unit.
   function nextRound(){
     if (state.phase !== 'roundEnd') return;
     state.players.forEach(function(p){
-      var fielded = p.hand.filter(function(c){ return onBoard(p, c) || state.fielded.indexOf(c) !== -1; });
-      p.discard = p.discard.concat(fielded);
-      p.deck = shuffle(p.deck.concat(p.hand.filter(function(c){ return fielded.indexOf(c) === -1; })));
-      p.hand = [];
-      p.units = new Array(UNIT_SLOTS).fill(null);
+      p.units.forEach(function(u){
+        if (!u) return;
+        u.maxHp = u.card.hp + (u.card.bonusHp || 0);
+        u.hp = u.maxHp;
+        u.delay = 0; u.delayed = 0; u.jammed = false;
+      });
+      p.summoned = false;
+      topUpHand(p);
     });
     state.round++;
     state.tick = 0;
@@ -810,8 +874,8 @@
     clearFx();
     state.phase = 'setup';
     state.inspected = null;
-    addLog('Round ' + state.round + ': fielded units go to the discard pile, the bench is shuffled back, and each player draws ' + HAND_SIZE + '.', 'meta');
-    dealUnits();
+    state.selected = null;
+    addLog('Round ' + state.round + ': survivors are healed to full. Each player tops up their hand and may summon 1 unit.', 'meta');
     logTurnOrder();
     render();
   }
@@ -859,8 +923,10 @@
   function renderUnit(side, slot, next){
     var p = state.players[side], u = p.units[slot];
     if (!u){
-      var empty = el('div', 'slot-empty', { 'data-unit': side + '-' + slot });
+      var target = !!(state.selected && state.selected.side === side);
+      var empty = el('div', 'slot-empty' + (target ? ' target' : ''), { 'data-unit': side + '-' + slot });
       empty.innerHTML = prioBadge(side, slot);
+      if (target){ empty.title = 'Summon here'; empty.addEventListener('click', function(){ onSlotClick(side, slot); }); }
       return empty;
     }
     var card = u.card;
@@ -874,6 +940,7 @@
       'data-unit': side + '-' + slot, tabindex: '0', role: 'button', title: card.name
     });
     tile.innerHTML = prioBadge(side, slot) + (isNext ? '<div class="next-tag">NEXT</div>' : '') +
+      (u.summonedNow ? '<div class="new-tag" title="Summoned this round — click to take it back">NEW</div>' : '') +
       '<div class="icon">' + card.icon + '</div><div class="name">' + card.name + '</div>' + roleLine(card, u, slot) + statusLine(u) +
       '<div class="line mono' + (buffed ? ' buff' : '') + '" title="Armor and magic resist, including buffs this round">ARM ' + arm + ' · MR ' + mr + '</div>' +
       '<div class="line mono">' + u.hp + '/' + u.maxHp + ' HP</div>' +
@@ -904,53 +971,55 @@
     return head;
   }
 
-  // The drawn hand: each card shows where it was placed, or that it is on the bench this round.
-  function renderHandRow(side, card){
-    var p = state.players[side];
-    var slot = p.units.findIndex(function(u){ return u && u.card === card; });
-    var row = el('div', 'deck-row r-' + card.role + (slot === -1 ? ' benched' : ''), { tabindex: '0', title: card.name });
-    var where = slot !== -1 ? SLOT_NAMES[slot].toUpperCase() + ' #' + priority(side, slot) : 'BENCH';
+  // A unit card in hand. Click to pick it, then click an empty slot; double-click summons it to its preferred line.
+  function renderHandRow(side, card, pos){
+    var p = state.players[side], can = canSummon(p);
+    var sel = state.selected, picked = !!(sel && sel.side === side && sel.pos === pos);
+    var row = el('div', 'deck-row r-' + card.role + (picked ? ' picked' : '') + (can ? '' : ' locked'), { tabindex: '0', title: card.name });
     row.innerHTML = '<span class="pos mono"></span><span>' + card.icon + '</span>' +
-      '<span class="nm">' + card.name + '<small>' + where + '</small></span>' + statCells(card);
-    hoverInspect(row, function(){ return slot !== -1 ? { card: card, side: side, slot: slot } : { card: card, side: side }; });
+      '<span class="nm">' + card.name + '<small>' + card.prefers.toUpperCase() + '</small></span>' + statCells(card);
+    row.addEventListener('click', function(){ onHandClick(side, pos); });
+    row.addEventListener('dblclick', function(){ onHandDoubleClick(side, pos); });
+    hoverInspect(row, function(){ return { card: card, side: side }; });
+    return row;
+  }
+  // A structure card in hand, with a Place button during setup.
+  function renderStructureCardRow(side, card, pos){
+    var row = el('div', 'deck-row struct-card', { tabindex: '0', title: card.name });
+    row.innerHTML = '<span class="pos mono"></span><span>' + card.icon + '</span>' +
+      '<span class="nm">' + card.name + '<small>BUILD ' + card.cost + ' CON</small></span>';
+    var b = row.appendChild(el('button', 'btn small place', { type: 'button' }));
+    b.textContent = 'Place';
+    b.disabled = state.phase !== 'setup';
+    b.addEventListener('click', function(e){ e.stopPropagation(); placeStructure(side, pos); });
+    hoverInspect(row, function(){ return { structureCard: card, side: side }; });
     return row;
   }
 
-  // Construction pool, built structures (with their progress), and in setup a Build button per structure.
+  // Construction pool and placed structures (unfinished ones show build progress, finished Spires their healing).
   // Hovering any of them shows the structure in Card Info.
   function renderStructures(side, panel){
     var p = state.players[side];
     var sec = panel.appendChild(el('div', 'structures', {}));
-    sec.innerHTML = '<div class="row-label">Construction <b class="mono">' + p.con + '</b></div>';
+    sec.innerHTML = '<div class="row-label">Structures · construction pool <b class="mono">' + p.con + '</b></div>';
     var builtRow = sec.appendChild(el('div', 'structure-row', {}));
-    if (!p.structures.length) builtRow.appendChild(el('span', 'empty-note', {})).textContent = 'No structures built.';
+    if (!p.structures.length) builtRow.appendChild(el('span', 'empty-note', {})).textContent = 'None placed.';
     p.structures.forEach(function(s, i){
       var def = STRUCTURE_DEFS[s.key];
-      var pill = builtRow.appendChild(el('span', 'pill mono structure-pill' + (s.primed ? ' primed' : ''), { tabindex: '0' }));
-      pill.textContent = def.icon + ' ' + def.name + ' · ' + (s.primed ? 'PRIMED' : Math.min(s.progress, def.heal) + '/' + def.heal + ' HP');
+      var pill = builtRow.appendChild(el('span', 'pill mono structure-pill' + (!s.done ? ' building' : s.primed ? ' primed' : ''), { tabindex: '0' }));
+      pill.textContent = def.icon + ' ' + def.name + ' · ' +
+        (!s.done ? 'building ' + s.built + '/' + def.cost : s.primed ? 'PRIMED' : Math.min(s.progress, def.heal) + '/' + def.heal + ' HP');
       hoverInspect(pill, function(){ return { structure: s.key, side: side, index: i }; });
-    });
-    if (state.phase !== 'setup') return;
-    var row = sec.appendChild(el('div', 'structure-row', {}));
-    Object.keys(STRUCTURE_DEFS).forEach(function(k){
-      var def = STRUCTURE_DEFS[k];
-      // wrapped, because disabled buttons don't get hover events in every browser
-      var wrap = row.appendChild(el('span', '', {}));
-      var b = wrap.appendChild(el('button', 'btn small', { type: 'button' }));
-      b.textContent = 'Build ' + def.icon + ' ' + def.name + ' · ' + def.cost;
-      b.disabled = p.con < def.cost;
-      b.addEventListener('click', function(){ build(side, k); });
-      hoverInspect(wrap, function(){ return { structure: k, side: side }; });
     });
   }
 
-  // Card Info for a structure: its description, build cost, and — for a built copy — its progress.
+  // Card Info for a placed structure: its description and progress (construction, then healing).
   function structureInfoHtml(key, p, index){
-    var def = STRUCTURE_DEFS[key], n = structureCount(p, key), s = index != null ? p.structures[index] : null;
-    var pills = ['Build ' + def.cost, s ? (s.primed ? 'PRIMED' : 'Healed ' + s.progress + '/' + def.heal) : 'Needs ' + def.heal + ' HP healed', n ? 'Owned ×' + n : 'Not built'];
-    var footer = s
-      ? (s.primed ? 'Primed: your next attack hits every enemy.' : (def.heal - s.progress) + ' more HP of healing until it is primed.')
-      : 'Construction pool ' + p.con + (n > 1 ? ' · each copy counts and primes on its own' : '');
+    var def = STRUCTURE_DEFS[key], s = p.structures[index];
+    var pills = !s.done ? ['Built ' + s.built + '/' + def.cost + ' CON', 'Under construction'] : [s.primed ? 'PRIMED' : 'Healed ' + s.progress + '/' + def.heal, 'Finished'];
+    var footer = !s.done
+      ? (def.cost - s.built) + " more construction to finish. Your units' Construct actions build it."
+      : s.primed ? 'Primed: your next attack hits every enemy.' : (def.heal - s.progress) + ' more HP of healing until it is primed.';
     return '<div class="inspector-title"><div class="inspector-icon">' + def.icon + '</div>' +
       '<div><div class="inspector-name">' + def.name + '</div><div class="inspector-role">Structure</div></div></div>' +
       '<div class="inspector-stats">' + pills.map(function(t){ return '<span class="stat-pill mono">' + t + '</span>'; }).join('') + '</div>' +
@@ -963,7 +1032,7 @@
     var panel = document.getElementById('panel-' + side);
     panel.innerHTML =
       '<div class="panel-head"><div class="panel-title">' + p.name + '</div>' +
-      '<span class="pill mono" title="Cards left in your deck (drawn at random)">Deck ' + p.deck.length + '</span>' +
+      '<span class="pill mono" title="Cards left in your deck: units + structure cards">Deck ' + p.deck.length + ' + ' + p.structureDeck.length + '</span>' +
       '<span class="pill mono" title="Cards in the discard pile">Discard ' + p.discard.length + '</span></div>';
     var unitsSec = panel.appendChild(el('div', '', {}));
     // Slots are drawn facing the middle of the screen: the left player's run Back · Middle · Front, the right
@@ -979,10 +1048,17 @@
 
     var deckSec = panel.appendChild(el('div', 'deck-section', {}));
     var picksWrap = deckSec.appendChild(el('div', '', {}));
-    picksWrap.appendChild(el('div', 'row-label', {})).textContent = 'Your hand — ' + p.hand.length + ' drawn, ' + UNIT_SLOTS + ' placed by preferred position';
+    picksWrap.appendChild(el('div', 'row-label', {})).textContent = 'Hand · units' +
+      (state.phase !== 'setup' ? '' : p.summoned ? ' — summoned this round' : !canSummon(p) ? ' — board full' : ' — summon 1 this round');
     var picks = picksWrap.appendChild(el('div', 'deck-list', {}));
     picks.appendChild(statHeader());
-    p.hand.forEach(function(card){ picks.appendChild(renderHandRow(side, card)); });
+    if (!p.hand.length) picks.appendChild(el('span', 'empty-note', {})).textContent = 'No unit cards.';
+    p.hand.forEach(function(card, pos){ picks.appendChild(renderHandRow(side, card, pos)); });
+    var structWrap = deckSec.appendChild(el('div', '', {}));
+    structWrap.appendChild(el('div', 'row-label', {})).textContent = 'Hand · structures';
+    var sList = structWrap.appendChild(el('div', 'deck-list', {}));
+    if (!p.structureHand.length) sList.appendChild(el('span', 'empty-note', {})).textContent = 'No structure cards.';
+    p.structureHand.forEach(function(card, pos){ sList.appendChild(renderStructureCardRow(side, card, pos)); });
   }
 
   // Hovering (or focusing) a card shows it in Card Info. Only the Card Info panel is redrawn, so the board
@@ -990,7 +1066,7 @@
   function hoverInspect(elem, getInfo){
     var show = function(){
       var info = getInfo(), cur = state.inspected;
-      if (!info || (cur && cur.card === info.card && cur.structure === info.structure && cur.index === info.index && cur.side === info.side && cur.slot === info.slot)) return;
+      if (!info || (cur && cur.card === info.card && cur.structure === info.structure && cur.structureCard === info.structureCard && cur.index === info.index && cur.side === info.side && cur.slot === info.slot)) return;
       state.inspected = info;
       renderInspector();
     };
@@ -1005,6 +1081,11 @@
     if (!ins){
       box.className = 'inspector';
       body.innerHTML = '<div class="inspector-empty">Click any card to see its stats.</div>';
+      return;
+    }
+    if (ins.structureCard){
+      box.className = 'inspector r-support';
+      body.innerHTML = structureCardHtml(ins.structureCard);
       return;
     }
     if (ins.structure){
@@ -1063,7 +1144,7 @@
     var body = document.getElementById('actionBody');
     var sp = state.spotlight;
     panel.className = 'action-panel' + (sp && sp.side != null ? ' p' + (sp.side + 1) : '');
-    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Your units were placed by preferred position. Switch abilities if you like (⇄ on the card, or in Card Info), then start the battle.</div>'; return; }
+    if (state.phase === 'setup'){ body.innerHTML = '<div class="action-wait">Each player may summon 1 unit: click a unit in hand, then an empty slot (or double-click it to use its preferred line). Click the NEW unit to take it back. Place structure cards to start building them. Switch abilities with ⇄, then start the battle.</div>'; return; }
     body.innerHTML = '';
     if (!sp){ body.innerHTML = '<div class="action-wait">' + (clock ? 'Simming…' : 'Paused.') + '</div>'; return; }
     body.appendChild(el('div', 'action-title', {})).textContent = sp.title;

@@ -29,7 +29,9 @@
   .row-card:first-child{ border-top:none; }
   .row-card.r-attacker{ --role:var(--danger); }
   .row-card.r-healer{ --role:var(--heal); }
-  .row-card.r-support{ --role:var(--support); }
+  .row-card.r-support, .row-card.r-structure{ --role:var(--support); }
+  .pool-group{ font-size:.66rem; text-transform:uppercase; letter-spacing:.07em; color:var(--text-dim); padding:8px 12px 4px; border-top:1px solid var(--line); background:var(--panel-2); }
+  .pool-group:first-child{ border-top:none; }
   .row-card .icon{ width:24px; text-align:center; font-size:1.1rem; }
   .row-card .info{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:3px; }
   .row-card .name{ font-weight:600; font-size:.82rem; }
@@ -95,15 +97,47 @@
   var side = 0;
 
   function inspect(key){
-    document.getElementById('inspector').className = 'inspector r-' + CARD_DEFS[key].role;
-    document.getElementById('inspectorBody').innerHTML = cardInfoHtml(CARD_DEFS[key]);
+    var structure = isStructureKey(key);
+    document.getElementById('inspector').className = 'inspector r-' + (structure ? 'support' : CARD_DEFS[key].role);
+    document.getElementById('inspectorBody').innerHTML = structure ? structureCardHtml(STRUCTURE_DEFS[key]) : cardInfoHtml(CARD_DEFS[key]);
+  }
+  // Units and structure cards are capped separately: DECK_SIZE units + STRUCTURE_CARDS structure cards.
+  function categoryFull(key){
+    var r = recipes[side];
+    return isStructureKey(key) ? structureCardCount(r) >= STRUCTURE_CARDS : unitCount(r) >= DECK_SIZE;
   }
   function change(key, delta){
     var r = recipes[side];
-    if (delta > 0 && deckTotal(r) >= DECK_SIZE) return;
+    if (delta > 0 && categoryFull(key)) return;
     r[key] = Math.max(0, Math.min(MAX_COPIES, r[key] + delta));
     render();
   }
+
+  function structureRow(key, withDetails){
+    var def = STRUCTURE_DEFS[key], qty = recipes[side][key];
+    var row = el('div', 'row-card r-structure', {});
+    row.innerHTML =
+      '<div class="icon">' + def.icon + '</div>' +
+      '<div class="info"><div class="name">' + def.name + '<small>Structure card</small></div>' +
+      (withDetails ? '<div class="pills"><span class="stat-pill mono">Build ' + def.cost + ' CON</span></div><div class="fx">' + def.text + '</div>' : '') +
+      '</div>' + stepperHtml(def.name, qty);
+    wireRow(row, key, qty);
+    return row;
+  }
+  function stepperHtml(name, qty){
+    return '<div class="stepper"><button class="btn" type="button" aria-label="Remove one ' + name + '">−</button>' +
+      '<b class="mono">' + qty + '</b><button class="btn" type="button" aria-label="Add one ' + name + '">+</button></div>';
+  }
+  function wireRow(row, key, qty){
+    var btns = row.querySelectorAll('button');
+    btns[0].disabled = qty <= 0;
+    btns[1].disabled = qty >= MAX_COPIES || categoryFull(key);
+    btns[0].addEventListener('click', function(){ change(key, -1); });
+    btns[1].addEventListener('click', function(){ change(key, 1); });
+    row.addEventListener('mouseenter', function(){ inspect(key); });
+    row.addEventListener('focusin', function(){ inspect(key); });
+  }
+  function anyRow(key, withDetails){ return isStructureKey(key) ? structureRow(key, withDetails) : cardRow(key, withDetails); }
 
   function cardRow(key, withDetails){
     var card = CARD_DEFS[key], qty = recipes[side][key];
@@ -116,16 +150,8 @@
           '<div class="fx">' + (card.abilities.length > 1 ? 'Abilities (pick 1, switchable mid-battle): ' : 'Ability: ') +
             card.abilities.filter(function(ab){ return ab.id !== 'none'; }).map(function(ab){ return ab.name + (ab.lines ? ' (' + slotRestriction(ab) + ')' : ''); }).join(' · ') + '</div>'
         : '') +
-      '</div>' +
-      '<div class="stepper"><button class="btn" type="button" aria-label="Remove one ' + card.name + '">−</button>' +
-      '<b class="mono">' + qty + '</b><button class="btn" type="button" aria-label="Add one ' + card.name + '">+</button></div>';
-    var btns = row.querySelectorAll('button');
-    btns[0].disabled = qty <= 0;
-    btns[1].disabled = qty >= MAX_COPIES || deckTotal(recipes[side]) >= DECK_SIZE;
-    btns[0].addEventListener('click', function(){ change(key, -1); });
-    btns[1].addEventListener('click', function(){ change(key, 1); });
-    row.addEventListener('mouseenter', function(){ inspect(key); });
-    row.addEventListener('focusin', function(){ inspect(key); });
+      '</div>' + stepperHtml(card.name, qty);
+    wireRow(row, key, qty);
     return row;
   }
 
@@ -133,17 +159,20 @@
     [0, 1].forEach(function(i){ document.getElementById('deckTab' + i).className = 'btn small deck-tab' + (i === side ? ' active' : ''); });
     var pool = document.getElementById('poolList');
     pool.innerHTML = '';
+    pool.appendChild(el('div', 'pool-group', {})).textContent = 'Units · ' + DECK_SIZE + ' per deck';
     Object.keys(CARD_DEFS).forEach(function(key){ pool.appendChild(cardRow(key, true)); });
+    pool.appendChild(el('div', 'pool-group', {})).textContent = 'Structures · ' + STRUCTURE_CARDS + ' per deck';
+    Object.keys(STRUCTURE_DEFS).forEach(function(key){ pool.appendChild(structureRow(key, true)); });
 
-    var recipe = recipes[side], total = deckTotal(recipe);
+    var recipe = recipes[side], units = unitCount(recipe), structs = structureCardCount(recipe);
     var summary = document.getElementById('deckSummary');
-    summary.textContent = total + ' / ' + DECK_SIZE + ' cards' + (total < DECK_SIZE ? ' · add ' + (DECK_SIZE - total) + ' more' : '');
-    summary.className = 'deck-summary mono' + (total !== DECK_SIZE ? ' warn' : '');
+    summary.textContent = 'Units ' + units + ' / ' + DECK_SIZE + ' · Structures ' + structs + ' / ' + STRUCTURE_CARDS;
+    summary.className = 'deck-summary mono' + (deckIsValid(recipe) ? '' : ' warn');
     var list = document.getElementById('deckList');
     list.innerHTML = '';
-    var keys = Object.keys(CARD_DEFS).filter(function(k){ return recipe[k] > 0; });
+    var keys = allCardKeys().filter(function(k){ return recipe[k] > 0; });
     if (!keys.length) list.appendChild(el('div', 'empty-msg', {})).textContent = 'Your deck is empty — add cards from the pool.';
-    keys.forEach(function(key){ list.appendChild(cardRow(key, false)); });
+    keys.forEach(function(key){ list.appendChild(anyRow(key, false)); });
   }
 
   document.getElementById('deckTab0').addEventListener('click', function(){ side = 0; render(); });
@@ -155,8 +184,8 @@
   document.getElementById('deckDefault').addEventListener('click', function(){ recipes[side] = defaultRecipe(); render(); });
   document.getElementById('deckClear').addEventListener('click', function(){ recipes[side] = emptyRecipe(); render(); });
   document.getElementById('deckApply').addEventListener('click', function(){
-    if (recipes.some(function(r){ return deckTotal(r) !== DECK_SIZE; })){
-      alert('Each deck must be exactly ' + DECK_SIZE + ' cards.');
+    if (!recipes.every(deckIsValid)){
+      alert('Each deck needs exactly ' + DECK_SIZE + ' units and ' + STRUCTURE_CARDS + ' structure cards.');
       return;
     }
     saveDeckRecipes(recipes);
